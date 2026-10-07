@@ -27,18 +27,20 @@ public class OwnerEarningsController {
     public ResponseEntity<ApiResponse<EarningsSummaryResponse>> summary(
             Authentication authentication,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(required = false) String view) {
         return ResponseEntity.ok(ApiResponse.success(
-                ownerEarningsService.getSummary(authentication.getName(), from, to)));
+                ownerEarningsService.getSummary(authentication.getName(), from, to, view)));
     }
 
     @GetMapping("/earnings/daily")
     public ResponseEntity<ApiResponse<List<DailyEarningsResponse>>> daily(
             Authentication authentication,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(required = false) String view) {
         return ResponseEntity.ok(ApiResponse.success(
-                ownerEarningsService.getDaily(authentication.getName(), from, to)));
+                ownerEarningsService.getDaily(authentication.getName(), from, to, view)));
     }
 
     @GetMapping("/payouts")

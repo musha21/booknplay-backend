@@ -1,6 +1,7 @@
 package lk.booknplay.entity;
 
 import jakarta.persistence.*;
+import lk.booknplay.enums.PricingRuleType;
 import lombok.*;
 
 import java.math.BigDecimal;
@@ -36,4 +37,15 @@ public class CourtPricing {
 
     @Column(nullable = false)
     private BigDecimal price;
+
+    /** Null on legacy rows; resolved via {@link lk.booknplay.util.CourtPriceResolver#effectiveType}. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "rule_type", length = 20)
+    private PricingRuleType ruleType;
+
+    @Column(name = "priority")
+    private Integer priority;
+
+    @Column(length = 80)
+    private String label;
 }

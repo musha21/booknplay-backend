@@ -20,6 +20,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -31,6 +32,8 @@ class OwnerEarningsServiceImplTest {
     private BookingRepository bookingRepository;
     @Mock
     private PayoutRepository payoutRepository;
+    @Mock
+    private PlanEntitlementService planEntitlementService;
 
     @InjectMocks
     private OwnerEarningsServiceImpl ownerEarningsService;
@@ -41,7 +44,9 @@ class OwnerEarningsServiceImplTest {
                 .id("biz-1")
                 .commissionPercent(new BigDecimal("10.00"))
                 .build();
+        doNothing().when(ownerAccessService).requireStaffPermission(eq("owner@example.com"), any());
         when(ownerAccessService.requireBusiness("owner@example.com")).thenReturn(business);
+        doNothing().when(planEntitlementService).assertEarnings(business);
 
         Booking booking = Booking.builder()
                 .id("b-1")
@@ -54,7 +59,8 @@ class OwnerEarningsServiceImplTest {
         EarningsSummaryResponse summary = ownerEarningsService.getSummary(
                 "owner@example.com",
                 LocalDate.of(2026, 9, 1),
-                LocalDate.of(2026, 9, 30)
+                LocalDate.of(2026, 9, 30),
+                null
         );
 
         assertEquals(1, summary.getBookingCount());

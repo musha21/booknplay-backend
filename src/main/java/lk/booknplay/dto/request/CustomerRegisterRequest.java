@@ -32,4 +32,8 @@ public class CustomerRegisterRequest {
     @NotBlank(message = "Phone number is required")
     @Pattern(regexp = "^\\+?[0-9]{9,15}$", message = "Invalid phone number format")
     private String phone;
+
+    /** Short-lived token from OTP verify proving the phone was verified. */
+    @NotBlank(message = "Phone verification token is required")
+    private String verificationToken;
 }

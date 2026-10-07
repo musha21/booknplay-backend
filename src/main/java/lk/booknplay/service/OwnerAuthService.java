@@ -20,4 +20,6 @@ public interface OwnerAuthService {
     OwnerResponse updateBusiness(String email, BusinessUpdateRequest request);
     void changePassword(String email, ChangePasswordRequest request);
     OwnerResponse uploadBusinessImages(String email, MultipartFile logo, List<MultipartFile> images, MultipartFile profileImage);
+    OwnerResponse reorderBusinessImages(String email, List<String> mediaIds);
+    OwnerResponse deleteBusinessImage(String email, String mediaId);
 }

@@ -1,5 +1,6 @@
 package lk.booknplay.service.impl;
 
+import io.jsonwebtoken.JwtException;
 import lk.booknplay.dto.request.CustomerRegisterRequest;
 import lk.booknplay.dto.request.CustomerUpdateRequest;
 import lk.booknplay.dto.response.CustomerResponse;
@@ -7,11 +8,15 @@ import lk.booknplay.entity.Customer;
 import lk.booknplay.entity.User;
 import lk.booknplay.enums.CustomerStatus;
 import lk.booknplay.enums.Role;
+import lk.booknplay.exception.BadRequestException;
 import lk.booknplay.exception.ConflictException;
 import lk.booknplay.exception.ResourceNotFoundException;
+import lk.booknplay.exception.UnauthorizedException;
 import lk.booknplay.repository.CustomerRepository;
 import lk.booknplay.repository.UserRepository;
+import lk.booknplay.security.jwt.JwtTokenProvider;
 import lk.booknplay.service.CustomerService;
+import lk.booknplay.util.PhoneNumberUtil;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -26,20 +31,27 @@ public class CustomerServiceImpl implements CustomerService {
     private final CustomerRepository customerRepository;
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+    private final JwtTokenProvider jwtTokenProvider;
 
     @Override
     @Transactional
     public CustomerResponse createCustomer(CustomerRegisterRequest request) {
+        String phone = PhoneNumberUtil.normalizeSriLanka(request.getPhone());
+        assertPhoneVerifiedByToken(request.getVerificationToken(), phone);
+
         if (userRepository.existsByEmail(request.getEmail())) {
             throw new ConflictException("EMAIL_EXISTS", "Email already in use");
         }
-        if (customerRepository.existsByPhone(request.getPhone())) {
+        if (customerRepository.existsByPhone(phone) || userRepository.existsByPhone(phone)) {
             throw new ConflictException("PHONE_EXISTS", "Phone number already in use");
         }
 
         User user = User.builder()
                 .email(request.getEmail())
                 .password(passwordEncoder.encode(request.getPassword()))
+                .phone(phone)
+                .phoneVerified(true)
+                .emailVerified(false)
                 .role(Role.CUSTOMER)
                 .isEnabled(true)
                 .isLocked(false)
@@ -49,7 +61,7 @@ public class CustomerServiceImpl implements CustomerService {
                 .user(user)
                 .firstName(request.getFirstName())
                 .lastName(request.getLastName())
-                .phone(request.getPhone())
+                .phone(phone)
                 .status(CustomerStatus.ACTIVE)
                 .build();
 
@@ -79,13 +91,23 @@ public class CustomerServiceImpl implements CustomerService {
         Customer customer = customerRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Customer not found with id: " + id));
 
-        if (!customer.getPhone().equals(request.getPhone()) && customerRepository.existsByPhone(request.getPhone())) {
+        String phone = PhoneNumberUtil.normalizeSriLanka(request.getPhone());
+        if (!customer.getPhone().equals(phone)
+                && (customerRepository.existsByPhone(phone) || userRepository.existsByPhone(phone))) {
             throw new ConflictException("PHONE_EXISTS", "Phone number already in use");
         }
 
         customer.setFirstName(request.getFirstName());
         customer.setLastName(request.getLastName());
-        customer.setPhone(request.getPhone());
+        customer.setPhone(phone);
+        User user = customer.getUser();
+        if (user != null) {
+            boolean phoneChanged = user.getPhone() == null || !phone.equals(user.getPhone());
+            user.setPhone(phone);
+            if (phoneChanged) {
+                user.setPhoneVerified(false);
+            }
+        }
         if (request.getProfileImage() != null) {
             customer.setProfileImage(request.getProfileImage());
         }
@@ -114,6 +136,19 @@ public class CustomerServiceImpl implements CustomerService {
     @Transactional(readOnly = true)
     public CustomerResponse getCurrentCustomer(String email) {
         return getCustomerByEmail(email);
+    }
+
+    private void assertPhoneVerifiedByToken(String verificationToken, String expectedPhone) {
+        String tokenPhone;
+        try {
+            tokenPhone = jwtTokenProvider.parsePhoneRegistrationToken(verificationToken);
+        } catch (JwtException | IllegalArgumentException ex) {
+            throw new UnauthorizedException("Invalid or expired phone verification token");
+        }
+        String normalizedTokenPhone = PhoneNumberUtil.normalizeSriLanka(tokenPhone);
+        if (!normalizedTokenPhone.equals(expectedPhone)) {
+            throw new BadRequestException("Phone number does not match the verified number");
+        }
     }
 
     private CustomerResponse mapToResponse(Customer customer) {

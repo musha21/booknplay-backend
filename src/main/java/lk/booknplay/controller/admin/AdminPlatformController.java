@@ -1,7 +1,10 @@
 package lk.booknplay.controller.admin;
 
+import lk.booknplay.dto.request.AdminSubscriptionPlanUpdateRequest;
+import lk.booknplay.dto.request.AdminSubscriptionUpdateRequest;
 import lk.booknplay.dto.response.*;
 import lk.booknplay.entity.AdminAuditLog;
+import lk.booknplay.enums.PlanCode;
 import lk.booknplay.enums.VenueStatus;
 import lk.booknplay.service.AdminPlatformService;
 import lk.booknplay.util.ApiResponse;
@@ -12,16 +15,84 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
-import java.math.BigDecimal;
+import jakarta.validation.Valid;
 
-@RestController @RequestMapping("/api/v1/admin") @RequiredArgsConstructor @PreAuthorize("hasRole('SUPER_ADMIN')")
+import java.math.BigDecimal;
+import java.util.List;
+
+@RestController
+@RequestMapping("/api/v1/admin")
+@RequiredArgsConstructor
+@PreAuthorize("hasRole('SUPER_ADMIN')")
 public class AdminPlatformController {
     private final AdminPlatformService service;
-    @GetMapping("/dashboard") public ResponseEntity<ApiResponse<AdminDashboardResponse>> dashboard() { return ResponseEntity.ok(ApiResponse.success(service.dashboard())); }
-    @GetMapping("/businesses") public ResponseEntity<ApiResponse<PageResponse<AdminBusinessResponse>>> businesses(Pageable pageable) { return ResponseEntity.ok(ApiResponse.success(PageResponse.from(service.businesses(pageable)))); }
-    @PatchMapping("/businesses/{id}/access") public ResponseEntity<ApiResponse<AdminBusinessResponse>> access(@PathVariable String id, @RequestParam boolean enabled, @RequestParam boolean locked, @RequestParam(required=false) String reason, Authentication auth) { return ResponseEntity.ok(ApiResponse.success(service.setBusinessAccess(id, enabled, locked, reason, auth.getName()))); }
-    @PatchMapping("/businesses/{id}/commission") public ResponseEntity<ApiResponse<AdminBusinessResponse>> commission(@PathVariable String id, @RequestParam BigDecimal value, @RequestParam(required=false) String reason, Authentication auth) { return ResponseEntity.ok(ApiResponse.success(service.setCommission(id, value, reason, auth.getName()))); }
-    @GetMapping("/venues") public ResponseEntity<ApiResponse<PageResponse<VenueResponse>>> venues(Pageable pageable) { return ResponseEntity.ok(ApiResponse.success(PageResponse.from(service.venues(pageable)))); }
-    @PatchMapping("/venues/{id}/status") public ResponseEntity<ApiResponse<VenueResponse>> venueStatus(@PathVariable String id, @RequestParam VenueStatus status, @RequestParam(required=false) String reason, Authentication auth) { return ResponseEntity.ok(ApiResponse.success(service.setVenueStatus(id, status, reason, auth.getName()))); }
-    @GetMapping("/audit") public ResponseEntity<ApiResponse<PageResponse<AdminAuditLog>>> audit(Pageable pageable) { return ResponseEntity.ok(ApiResponse.success(PageResponse.from(service.audit(pageable)))); }
+
+    @GetMapping("/dashboard")
+    public ResponseEntity<ApiResponse<AdminDashboardResponse>> dashboard() {
+        return ResponseEntity.ok(ApiResponse.success(service.dashboard()));
+    }
+
+    @GetMapping("/businesses")
+    public ResponseEntity<ApiResponse<PageResponse<AdminBusinessResponse>>> businesses(Pageable pageable) {
+        return ResponseEntity.ok(ApiResponse.success(PageResponse.from(service.businesses(pageable))));
+    }
+
+    @PatchMapping("/businesses/{id}/access")
+    public ResponseEntity<ApiResponse<AdminBusinessResponse>> access(
+            @PathVariable String id,
+            @RequestParam boolean enabled,
+            @RequestParam boolean locked,
+            @RequestParam(required = false) String reason,
+            Authentication auth) {
+        return ResponseEntity.ok(ApiResponse.success(service.setBusinessAccess(id, enabled, locked, reason, auth.getName())));
+    }
+
+    @PatchMapping("/businesses/{id}/commission")
+    public ResponseEntity<ApiResponse<AdminBusinessResponse>> commission(
+            @PathVariable String id,
+            @RequestParam BigDecimal value,
+            @RequestParam(required = false) String reason,
+            Authentication auth) {
+        return ResponseEntity.ok(ApiResponse.success(service.setCommission(id, value, reason, auth.getName())));
+    }
+
+    @PatchMapping("/businesses/{id}/subscription")
+    public ResponseEntity<ApiResponse<AdminBusinessResponse>> subscription(
+            @PathVariable String id,
+            @Valid @RequestBody AdminSubscriptionUpdateRequest request,
+            Authentication auth) {
+        return ResponseEntity.ok(ApiResponse.success(service.setBusinessSubscription(id, request, auth.getName())));
+    }
+
+    @GetMapping("/subscription-plans")
+    public ResponseEntity<ApiResponse<List<SubscriptionPlanResponse>>> subscriptionPlans() {
+        return ResponseEntity.ok(ApiResponse.success(service.listSubscriptionPlans()));
+    }
+
+    @PutMapping("/subscription-plans/{code}")
+    public ResponseEntity<ApiResponse<SubscriptionPlanResponse>> updateSubscriptionPlan(
+            @PathVariable PlanCode code,
+            @Valid @RequestBody AdminSubscriptionPlanUpdateRequest request,
+            Authentication auth) {
+        return ResponseEntity.ok(ApiResponse.success(service.updateSubscriptionPlan(code, request, auth.getName())));
+    }
+
+    @GetMapping("/venues")
+    public ResponseEntity<ApiResponse<PageResponse<VenueResponse>>> venues(Pageable pageable) {
+        return ResponseEntity.ok(ApiResponse.success(PageResponse.from(service.venues(pageable))));
+    }
+
+    @PatchMapping("/venues/{id}/status")
+    public ResponseEntity<ApiResponse<VenueResponse>> venueStatus(
+            @PathVariable String id,
+            @RequestParam VenueStatus status,
+            @RequestParam(required = false) String reason,
+            Authentication auth) {
+        return ResponseEntity.ok(ApiResponse.success(service.setVenueStatus(id, status, reason, auth.getName())));
+    }
+
+    @GetMapping("/audit")
+    public ResponseEntity<ApiResponse<PageResponse<AdminAuditLog>>> audit(Pageable pageable) {
+        return ResponseEntity.ok(ApiResponse.success(PageResponse.from(service.audit(pageable))));
+    }
 }

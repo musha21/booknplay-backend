@@ -39,13 +39,32 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(ForbiddenException.class)
     public ResponseEntity<ApiErrorResponse> handleForbidden(ForbiddenException ex) {
         return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                .body(ApiErrorResponse.of("FORBIDDEN", ex.getMessage()));
+                .body(ApiErrorResponse.of(ex.getCode(), ex.getMessage()));
     }
 
     @ExceptionHandler(ConflictException.class)
     public ResponseEntity<ApiErrorResponse> handleConflict(ConflictException ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ApiErrorResponse.of(ex.getCode(), ex.getMessage()));
+    }
+
+    @ExceptionHandler(GoneException.class)
+    public ResponseEntity<ApiErrorResponse> handleGone(GoneException ex) {
+        return ResponseEntity.status(HttpStatus.GONE)
+                .body(ApiErrorResponse.of("QUOTE_EXPIRED", ex.getMessage()));
+    }
+
+    @ExceptionHandler(TooManyRequestsException.class)
+    public ResponseEntity<ApiErrorResponse> handleTooManyRequests(TooManyRequestsException ex) {
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .body(ApiErrorResponse.of("TOO_MANY_REQUESTS", ex.getMessage()));
+    }
+
+    @ExceptionHandler(SmsDeliveryException.class)
+    public ResponseEntity<ApiErrorResponse> handleSmsDelivery(SmsDeliveryException ex) {
+        log.error("SMS delivery failed: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                .body(ApiErrorResponse.of("SMS_DELIVERY_FAILED", "Unable to send SMS. Please try again"));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
@@ -64,6 +83,16 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiErrorResponse> handleDataIntegrity(DataIntegrityViolationException ex) {
         log.error("Data integrity error", ex);
         String message = ex.getMostSpecificCause() != null ? ex.getMostSpecificCause().getMessage() : ex.getMessage();
+        String lower = message == null ? "" : message.toLowerCase();
+        if (lower.contains("uk_court_slot")
+                || lower.contains("uk_active_court_slot")
+                || lower.contains("active_court_slot")) {
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body(ApiErrorResponse.of(
+                            "COURT_ALREADY_BOOKED",
+                            "The court is already booked for the selected time slot."
+                    ));
+        }
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(ApiErrorResponse.of("DATA_INTEGRITY", message));
     }

@@ -23,14 +23,22 @@ public class OwnerVenueRequest {
     @NotBlank(message = "City is required")
     private String city;
 
+    private String formattedAddress;
+    private String venueType;
+
     private Double latitude;
     private Double longitude;
     private String description;
     private String coverImageUrl;
 
     @Builder.Default
-    private List<String> amenities = new ArrayList<>();
+    private List<String> rules = new ArrayList<>();
+
+    private String additionalRules;
 
     @Builder.Default
-    private List<String> imageUrls = new ArrayList<>();
+    private List<String> amenities = new ArrayList<>();
+
+    /** When null, existing venue photos are left unchanged. */
+    private List<String> imageUrls;
 }

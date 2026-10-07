@@ -51,6 +51,34 @@ public class Business {
     @Column(name = "commission_percent", nullable = false, precision = 5, scale = 2)
     private BigDecimal commissionPercent = new BigDecimal("10.00");
 
+    @Column(name = "bank_name")
+    private String bankName;
+
+    @Column(name = "bank_account_name")
+    private String bankAccountName;
+
+    @Column(name = "bank_account_number")
+    private String bankAccountNumber;
+
+    @Column(name = "bank_branch")
+    private String bankBranch;
+
+    @Builder.Default
+    @Column(name = "notify_booking_email", nullable = false)
+    private boolean notifyBookingEmail = true;
+
+    @Builder.Default
+    @Column(name = "notify_booking_sms", nullable = false)
+    private boolean notifyBookingSms = false;
+
+    @Builder.Default
+    @Column(name = "notify_payment_email", nullable = false)
+    private boolean notifyPaymentEmail = true;
+
+    @Builder.Default
+    @Column(name = "notify_trial_email", nullable = false)
+    private boolean notifyTrialEmail = true;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 

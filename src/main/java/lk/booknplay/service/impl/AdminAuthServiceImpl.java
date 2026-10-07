@@ -7,6 +7,7 @@ import lk.booknplay.dto.response.AuthResponse;
 import lk.booknplay.entity.RefreshToken;
 import lk.booknplay.entity.User;
 import lk.booknplay.enums.Role;
+import lk.booknplay.exception.BadRequestException;
 import lk.booknplay.exception.UnauthorizedException;
 import lk.booknplay.repository.RefreshTokenRepository;
 import lk.booknplay.repository.UserRepository;
@@ -31,6 +32,9 @@ public class AdminAuthServiceImpl implements AdminAuthService {
 
     @Override @Transactional
     public AuthResponse login(CustomerLoginRequest request) {
+        if (request.getEmail() == null || request.getEmail().isBlank()) {
+            throw new BadRequestException("Email is required");
+        }
         authenticationManager.authenticate(new UsernamePasswordAuthenticationToken(request.getEmail(), request.getPassword()));
         User user = admin(request.getEmail());
         return response(user, createRefreshToken(user));

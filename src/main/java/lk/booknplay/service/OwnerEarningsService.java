@@ -8,7 +8,7 @@ import java.time.LocalDate;
 import java.util.List;
 
 public interface OwnerEarningsService {
-    EarningsSummaryResponse getSummary(String ownerEmail, LocalDate from, LocalDate to);
-    List<DailyEarningsResponse> getDaily(String ownerEmail, LocalDate from, LocalDate to);
+    EarningsSummaryResponse getSummary(String ownerEmail, LocalDate from, LocalDate to, String view);
+    List<DailyEarningsResponse> getDaily(String ownerEmail, LocalDate from, LocalDate to, String view);
     List<PayoutResponse> listPayouts(String ownerEmail);
 }

@@ -19,4 +19,8 @@ public class AdminBusinessResponse {
     private long venueCount;
     private String logoUrl;
     private List<String> imageUrls;
+    private String planCode;
+    private String subscriptionStatus;
+    private java.time.LocalDateTime trialEndsAt;
+    private SubscriptionResponse.PlanLimits limits;
 }

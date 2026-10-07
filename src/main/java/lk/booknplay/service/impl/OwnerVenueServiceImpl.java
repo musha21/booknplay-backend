@@ -11,10 +11,15 @@ import lk.booknplay.dto.response.OperatingHoursResponse;
 import lk.booknplay.dto.response.VenueResponse;
 import lk.booknplay.entity.*;
 import lk.booknplay.enums.VenueStatus;
+import lk.booknplay.enums.BookingStatus;
+import lk.booknplay.exception.BadRequestException;
+import lk.booknplay.exception.ConflictException;
 import lk.booknplay.exception.ResourceNotFoundException;
 import lk.booknplay.repository.*;
+import lk.booknplay.service.FileStorageService;
 import lk.booknplay.service.OwnerAccessService;
 import lk.booknplay.service.OwnerVenueService;
+import lk.booknplay.service.PlanEntitlementService;
 import lk.booknplay.util.SportCatalog;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -22,24 +27,34 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.time.LocalDate;
+import java.time.LocalTime;
+import java.util.HashSet;
+import org.springframework.web.multipart.MultipartFile;
 
 @Service
 @RequiredArgsConstructor
 public class OwnerVenueServiceImpl implements OwnerVenueService {
 
     private final OwnerAccessService ownerAccessService;
+    private final PlanEntitlementService planEntitlementService;
     private final VenueRepository venueRepository;
     private final CourtRepository courtRepository;
     private final VenueImageRepository venueImageRepository;
     private final OperatingHoursRepository operatingHoursRepository;
     private final CancellationPolicyRepository cancellationPolicyRepository;
     private final SportRepository sportRepository;
+    private final BookingRepository bookingRepository;
+    private final FileStorageService fileStorageService;
 
     @Override
     @Transactional(readOnly = true)
-    public List<VenueResponse> listVenues(String ownerEmail) {
+    public List<VenueResponse> listVenues(String ownerEmail, boolean archived) {
         Business business = ownerAccessService.requireBusiness(ownerEmail);
-        return venueRepository.findByBusinessId(business.getId()).stream()
+        List<Venue> venues = archived
+                ? venueRepository.findByBusinessIdAndStatus(business.getId(), VenueStatus.DELETED)
+                : venueRepository.findByBusinessIdAndStatusNot(business.getId(), VenueStatus.DELETED);
+        return venues.stream()
                 .map(this::mapVenue)
                 .toList();
     }
@@ -56,18 +71,23 @@ public class OwnerVenueServiceImpl implements OwnerVenueService {
     @Override
     @Transactional
     public VenueResponse createVenue(String ownerEmail, OwnerVenueRequest request) {
-        Business business = ownerAccessService.requireBusiness(ownerEmail);
+        Business business = ownerAccessService.requireMutableOwner(ownerEmail);
+        planEntitlementService.assertCanCreateVenue(business);
         Venue venue = Venue.builder()
                 .business(business)
                 .name(defaultVenueName(business, null, request.getName()))
                 .address(request.getAddress())
                 .city(request.getCity())
+                .formattedAddress(request.getFormattedAddress())
+                .venueType(request.getVenueType())
                 .latitude(request.getLatitude())
                 .longitude(request.getLongitude())
                 .description(request.getDescription())
                 .coverImageUrl(request.getCoverImageUrl())
+                .additionalRules(request.getAdditionalRules())
                 .amenities(request.getAmenities() != null ? new ArrayList<>(request.getAmenities()) : new ArrayList<>())
-                .status(VenueStatus.ACTIVE)
+                .rules(request.getRules() != null ? new ArrayList<>(request.getRules()) : new ArrayList<>())
+                .status(VenueStatus.DRAFT)
                 .build();
         Venue saved = venueRepository.save(venue);
         replaceVenueImages(saved, request.getImageUrls());
@@ -77,17 +97,27 @@ public class OwnerVenueServiceImpl implements OwnerVenueService {
     @Override
     @Transactional
     public VenueResponse updateVenue(String ownerEmail, String venueId, OwnerVenueRequest request) {
-        Venue venue = ownerAccessService.requireVenue(ownerEmail, venueId);
+        ownerAccessService.requireMutableOwner(ownerEmail);
+        Venue venue = ownerAccessService.requireMutableVenue(ownerEmail, venueId);
         venue.setName(request.getName());
         venue.setAddress(request.getAddress());
         venue.setCity(request.getCity());
+        venue.setFormattedAddress(request.getFormattedAddress());
+        venue.setVenueType(request.getVenueType());
         venue.setLatitude(request.getLatitude());
         venue.setLongitude(request.getLongitude());
         venue.setDescription(request.getDescription());
-        venue.setCoverImageUrl(request.getCoverImageUrl());
+        if (request.getCoverImageUrl() != null) {
+            venue.setCoverImageUrl(request.getCoverImageUrl());
+        }
+        venue.setAdditionalRules(request.getAdditionalRules());
         venue.getAmenities().clear();
         if (request.getAmenities() != null) {
             venue.getAmenities().addAll(request.getAmenities());
+        }
+        venue.getRules().clear();
+        if (request.getRules() != null) {
+            venue.getRules().addAll(request.getRules());
         }
         if (request.getImageUrls() != null) {
             replaceVenueImages(venue, request.getImageUrls());
@@ -98,7 +128,8 @@ public class OwnerVenueServiceImpl implements OwnerVenueService {
     @Override
     @Transactional
     public VenueResponse replaceImages(String ownerEmail, String venueId, VenueImagesRequest request) {
-        Venue venue = ownerAccessService.requireVenue(ownerEmail, venueId);
+        ownerAccessService.requireMutableOwner(ownerEmail);
+        Venue venue = ownerAccessService.requireMutableVenue(ownerEmail, venueId);
         replaceVenueImages(venue, request.getImageUrls());
         return mapVenue(venue);
     }
@@ -113,7 +144,8 @@ public class OwnerVenueServiceImpl implements OwnerVenueService {
     @Override
     @Transactional
     public List<OperatingHoursResponse> replaceOperatingHours(String ownerEmail, String venueId, OperatingHoursUpdateRequest request) {
-        Venue venue = ownerAccessService.requireVenue(ownerEmail, venueId);
+        ownerAccessService.requireMutableOwner(ownerEmail);
+        Venue venue = ownerAccessService.requireMutableVenue(ownerEmail, venueId);
         operatingHoursRepository.deleteByVenueId(venueId);
         operatingHoursRepository.flush();
         List<OperatingHours> saved = request.getDays().stream()
@@ -141,7 +173,7 @@ public class OwnerVenueServiceImpl implements OwnerVenueService {
     @Override
     @Transactional
     public CancellationPolicyResponse upsertCancellationPolicy(String ownerEmail, CancellationPolicyRequest request) {
-        Business business = ownerAccessService.requireBusiness(ownerEmail);
+        Business business = ownerAccessService.requireMutableOwner(ownerEmail);
         CancellationPolicy policy = cancellationPolicyRepository.findByBusinessId(business.getId())
                 .orElse(CancellationPolicy.builder().business(business).build());
         policy.setHoursBeforeDeadline(request.getHoursBeforeDeadline());
@@ -152,7 +184,8 @@ public class OwnerVenueServiceImpl implements OwnerVenueService {
     @Override
     @Transactional
     public VenueResponse onboardVenue(String ownerEmail, VenueOnboardRequest request) {
-        Business business = ownerAccessService.requireBusiness(ownerEmail);
+        Business business = ownerAccessService.requireMutableOwner(ownerEmail);
+        planEntitlementService.assertCanCreateVenue(business);
         String city = request.getCity();
         if (city == null || city.isBlank()) {
             String[] parts = request.getFormattedAddress().split(",");
@@ -182,7 +215,7 @@ public class OwnerVenueServiceImpl implements OwnerVenueService {
                 .amenities(request.getAmenities() != null ? new ArrayList<>(request.getAmenities()) : new ArrayList<>())
                 .rules(request.getRulePresets() != null ? new ArrayList<>(request.getRulePresets()) : new ArrayList<>())
                 .additionalRules(request.getAdditionalRules())
-                .status(VenueStatus.ACTIVE)
+                .status(VenueStatus.DRAFT)
                 .build());
 
         for (var facility : request.getFacilities()) {
@@ -218,6 +251,139 @@ public class OwnerVenueServiceImpl implements OwnerVenueService {
         return getVenue(ownerEmail, venue.getId());
     }
 
+    @Override
+    @Transactional
+    public VenueResponse submitVenue(String ownerEmail, String venueId) {
+        ownerAccessService.requireMutableOwner(ownerEmail);
+        Venue venue = ownerAccessService.requireMutableVenue(ownerEmail, venueId);
+        if (venue.getStatus() != VenueStatus.DRAFT && venue.getStatus() != VenueStatus.REJECTED) {
+            throw new BadRequestException("Only draft or rejected venues can be published");
+        }
+        if (venue.getAddress() == null || venue.getAddress().isBlank()
+                || venue.getCity() == null || venue.getCity().isBlank()
+                || venue.getLatitude() == null || venue.getLongitude() == null) {
+            throw new BadRequestException("Add a complete venue location before publishing");
+        }
+        if (courtRepository.findByVenueId(venueId).isEmpty()) {
+            throw new BadRequestException("Add at least one bookable space before publishing");
+        }
+        if (operatingHoursRepository.findByVenueId(venueId).isEmpty()) {
+            throw new BadRequestException("Add operating hours before publishing");
+        }
+        if (venueImageRepository.countByVenueId(venueId) == 0 && isBlank(venue.getCoverImageUrl())) {
+            throw new BadRequestException("Upload at least one venue photo before publishing");
+        }
+        venue.setStatus(VenueStatus.APPROVED);
+        return mapVenue(venueRepository.save(venue));
+    }
+
+    @Override
+    @Transactional
+    public VenueResponse uploadMedia(String ownerEmail, String venueId, List<MultipartFile> images) {
+        ownerAccessService.requireMutableOwner(ownerEmail);
+        Venue venue = ownerAccessService.requireMutableVenue(ownerEmail, venueId);
+        List<MultipartFile> valid = images == null ? List.of() : images.stream()
+                .filter(image -> image != null && !image.isEmpty())
+                .toList();
+        long existing = venueImageRepository.countByVenueId(venueId);
+        if (valid.isEmpty()) {
+            throw new BadRequestException("Choose at least one image");
+        }
+        if (existing + valid.size() > 4) {
+            throw new BadRequestException("A venue can have up to 6 photos");
+        }
+        int order = (int) existing;
+        for (MultipartFile image : valid) {
+            String url = fileStorageService.store(image, "venue/" + venueId);
+            venueImageRepository.save(VenueImage.builder()
+                    .venue(venue)
+                    .url(url)
+                    .sortOrder(order++)
+                    .build());
+        }
+        syncCoverImage(venue);
+        return mapVenue(venueRepository.save(venue));
+    }
+
+    @Override
+    @Transactional
+    public VenueResponse reorderMedia(String ownerEmail, String venueId, List<String> mediaIds) {
+        ownerAccessService.requireMutableOwner(ownerEmail);
+        Venue venue = ownerAccessService.requireMutableVenue(ownerEmail, venueId);
+        List<VenueImage> current = venueImageRepository.findByVenueIdOrderBySortOrderAsc(venueId);
+        if (mediaIds == null || mediaIds.size() != current.size()
+                || !new HashSet<>(mediaIds).equals(current.stream().map(VenueImage::getId).collect(java.util.stream.Collectors.toSet()))) {
+            throw new BadRequestException("Media order must contain every venue image exactly once");
+        }
+        java.util.Map<String, VenueImage> byId = current.stream()
+                .collect(java.util.stream.Collectors.toMap(VenueImage::getId, image -> image));
+        for (int i = 0; i < mediaIds.size(); i++) {
+            VenueImage image = byId.get(mediaIds.get(i));
+            image.setSortOrder(i);
+            venueImageRepository.save(image);
+        }
+        venueImageRepository.flush();
+        syncCoverImage(venue);
+        return mapVenue(venueRepository.save(venue));
+    }
+
+    @Override
+    @Transactional
+    public VenueResponse deleteMedia(String ownerEmail, String venueId, String mediaId) {
+        ownerAccessService.requireMutableOwner(ownerEmail);
+        Venue venue = ownerAccessService.requireMutableVenue(ownerEmail, venueId);
+        VenueImage image = venueImageRepository.findByIdAndVenueId(mediaId, venueId)
+                .orElseThrow(() -> new ResourceNotFoundException("Venue image not found"));
+        String url = image.getUrl();
+        venueImageRepository.delete(image);
+        venueImageRepository.flush();
+        List<VenueImage> remaining = venueImageRepository.findByVenueIdOrderBySortOrderAsc(venueId);
+        for (int i = 0; i < remaining.size(); i++) {
+            remaining.get(i).setSortOrder(i);
+        }
+        venueImageRepository.saveAll(remaining);
+        syncCoverImage(venue);
+        fileStorageService.delete(url);
+        return mapVenue(venueRepository.save(venue));
+    }
+
+    @Override
+    @Transactional
+    public VenueResponse archiveVenue(String ownerEmail, String venueId) {
+        ownerAccessService.requireMutableOwner(ownerEmail);
+        Venue venue = ownerAccessService.requireMutableVenue(ownerEmail, venueId);
+        if (venue.getStatus() == VenueStatus.DELETED) {
+            return mapVenue(venue);
+        }
+        boolean hasFutureBookings = bookingRepository.existsFutureBooking(
+                venueId,
+                List.of(BookingStatus.PENDING, BookingStatus.CONFIRMED),
+                LocalDate.now(),
+                LocalTime.now());
+        if (hasFutureBookings) {
+            throw new ConflictException("VENUE_HAS_FUTURE_BOOKINGS", "This venue has future bookings and cannot be archived yet");
+        }
+        venue.setArchivedFromStatus(venue.getStatus());
+        venue.setStatus(VenueStatus.DELETED);
+        return mapVenue(venueRepository.save(venue));
+    }
+
+    @Override
+    @Transactional
+    public VenueResponse restoreVenue(String ownerEmail, String venueId) {
+        ownerAccessService.requireMutableOwner(ownerEmail);
+        Venue venue = ownerAccessService.requireMutableVenue(ownerEmail, venueId);
+        if (venue.getStatus() != VenueStatus.DELETED) {
+            throw new BadRequestException("Only archived venues can be restored");
+        }
+        VenueStatus restoreStatus = venue.getArchivedFromStatus() == null
+                ? VenueStatus.DRAFT
+                : venue.getArchivedFromStatus();
+        venue.setStatus(restoreStatus == VenueStatus.DELETED ? VenueStatus.DRAFT : restoreStatus);
+        venue.setArchivedFromStatus(null);
+        return mapVenue(venueRepository.save(venue));
+    }
+
     private String defaultVenueName(Business business, String venueType, String name) {
         if (name != null && !name.isBlank()) {
             return name.trim();
@@ -246,8 +412,12 @@ public class OwnerVenueServiceImpl implements OwnerVenueService {
         if (imageUrls == null) {
             return;
         }
+        List<String> validUrls = imageUrls.stream().filter(url -> url != null && !url.isBlank()).distinct().toList();
+        if (validUrls.size() > 4) {
+            throw new BadRequestException("A venue can have up to 6 photos");
+        }
         int order = 0;
-        for (String url : imageUrls) {
+        for (String url : validUrls) {
             if (url == null || url.isBlank()) {
                 continue;
             }
@@ -257,6 +427,16 @@ public class OwnerVenueServiceImpl implements OwnerVenueService {
                     .sortOrder(order++)
                     .build());
         }
+        syncCoverImage(venue);
+    }
+
+    private void syncCoverImage(Venue venue) {
+        List<VenueImage> ordered = venueImageRepository.findByVenueIdOrderBySortOrderAsc(venue.getId());
+        venue.setCoverImageUrl(ordered.isEmpty() ? null : ordered.get(0).getUrl());
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.isBlank();
     }
 
     private VenueResponse mapVenue(Venue venue) {
@@ -275,12 +455,14 @@ public class OwnerVenueServiceImpl implements OwnerVenueService {
         if (!courts.isEmpty()) filled++;
         int setup = Math.round((filled / 5f) * 100);
 
-        String businessImage = null;
-        if (venue.getBusiness() != null) {
-            businessImage = venue.getBusiness().getLogoUrl();
+        Business business = venue.getBusiness();
+        String businessLogo = business != null ? business.getLogoUrl() : null;
+        String businessImage = businessLogo;
+        if (businessImage == null && !images.isEmpty()) {
+            businessImage = images.get(0).getUrl();
         }
         if (businessImage == null) {
-            businessImage = images.isEmpty() ? venue.getCoverImageUrl() : images.get(0).getUrl();
+            businessImage = venue.getCoverImageUrl();
         }
 
         String sportName = courts.stream()
@@ -291,6 +473,8 @@ public class OwnerVenueServiceImpl implements OwnerVenueService {
 
         return VenueResponse.builder()
                 .id(venue.getId())
+                .businessId(business != null ? business.getId() : null)
+                .businessName(business != null ? business.getName() : null)
                 .name(venue.getName())
                 .address(venue.getAddress())
                 .city(venue.getCity())
@@ -303,12 +487,18 @@ public class OwnerVenueServiceImpl implements OwnerVenueService {
                 .status(venue.getStatus())
                 .coverImageUrl(venue.getCoverImageUrl())
                 .businessImageUrl(businessImage)
+                .businessLogoUrl(businessLogo)
                 .startingPrice(starting)
                 .currency("LKR")
                 .amenities(venue.getAmenities() == null ? List.of() : new java.util.ArrayList<>(venue.getAmenities()))
                 .rules(venue.getRules() == null ? List.of() : new java.util.ArrayList<>(venue.getRules()))
                 .additionalRules(venue.getAdditionalRules())
                 .images(images.stream().map(VenueImage::getUrl).toList())
+                .media(images.stream().map(image -> lk.booknplay.dto.response.MediaResponse.builder()
+                        .id(image.getId())
+                        .url(image.getUrl())
+                        .sortOrder(image.getSortOrder())
+                        .build()).toList())
                 .courts(courts.stream().map(this::mapCourt).toList())
                 .setupPercent(setup)
                 .build();

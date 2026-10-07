@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lk.booknplay.dto.request.HomepageConfigRequest;
 import lk.booknplay.dto.request.PremiumSlideRequest;
 import lk.booknplay.dto.response.HomepageConfigResponse;
+import lk.booknplay.dto.response.ImageUploadResponse;
 import lk.booknplay.dto.response.PremiumSlideResponse;
 import lk.booknplay.entity.*;
 import lk.booknplay.enums.HomepageConfigStatus;
@@ -12,10 +13,12 @@ import lk.booknplay.enums.VenueStatus;
 import lk.booknplay.exception.BadRequestException;
 import lk.booknplay.exception.ResourceNotFoundException;
 import lk.booknplay.repository.*;
+import lk.booknplay.service.FileStorageService;
 import lk.booknplay.service.HomepageConfigService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -28,6 +31,7 @@ public class HomepageConfigServiceImpl implements HomepageConfigService {
     private static final Set<String> ALLOWED_SECTIONS = Set.copyOf(DEFAULT_ORDER);
     private static final Set<String> INTENSITIES = Set.of("NONE", "SUBTLE", "ENERGETIC");
     private static final List<VenueStatus> LIVE_STATUSES = List.of(VenueStatus.ACTIVE, VenueStatus.APPROVED);
+    private static final String HOMEPAGE_UPLOAD_PREFIX = "/uploads/homepage/";
 
     private final HomepageConfigRepository configs;
     private final BusinessRepository businesses;
@@ -37,6 +41,7 @@ public class HomepageConfigServiceImpl implements HomepageConfigService {
     private final CourtRepository courts;
     private final AdminAuditLogRepository audit;
     private final ObjectMapper objectMapper;
+    private final FileStorageService files;
 
     @Override
     @Transactional(readOnly = true)
@@ -98,6 +103,11 @@ public class HomepageConfigServiceImpl implements HomepageConfigService {
         configs.save(draft);
         audit(adminEmail, "HOMEPAGE_VERSION_RESTORED", source.getId(), reason);
         return publish(reason, adminEmail);
+    }
+
+    @Override
+    public ImageUploadResponse uploadSlideImage(MultipartFile image) {
+        return ImageUploadResponse.builder().imageUrl(files.store(image, "homepage")).build();
     }
 
     private HomepageConfig getOrCreateDraft() {
@@ -231,7 +241,8 @@ public class HomepageConfigServiceImpl implements HomepageConfigService {
             throw new BadRequestException(business.getName() + " has no live venues");
         }
         String imageUrl = blank(slide.getImageUrl());
-        if (imageUrl != null && !allowedImages(business).contains(imageUrl)) {
+        boolean homepageUpload = imageUrl != null && imageUrl.startsWith(HOMEPAGE_UPLOAD_PREFIX);
+        if (imageUrl != null && !homepageUpload && !allowedImages(business).contains(imageUrl)) {
             throw new BadRequestException("Premium slide image must be one of the business uploads");
         }
     }
@@ -308,7 +319,8 @@ public class HomepageConfigServiceImpl implements HomepageConfigService {
     private PremiumSlideResponse toSlideResponse(PremiumSlideRequest slide, Business business, List<Venue> liveVenues, int order) {
         List<String> allowed = allowedImages(business);
         String image = blank(slide.getImageUrl());
-        if (image == null || !allowed.contains(image)) {
+        boolean homepageUpload = image != null && image.startsWith(HOMEPAGE_UPLOAD_PREFIX);
+        if (image == null || (!allowed.contains(image) && !homepageUpload)) {
             image = allowed.isEmpty() ? business.getLogoUrl() : allowed.get(0);
         }
         return PremiumSlideResponse.builder()

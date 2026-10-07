@@ -3,6 +3,7 @@ package lk.booknplay.controller.owner;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lk.booknplay.dto.request.BusinessUpdateRequest;
+import lk.booknplay.dto.request.MediaOrderRequest;
 import lk.booknplay.dto.response.OwnerResponse;
 import lk.booknplay.service.OwnerAuthService;
 import lk.booknplay.util.ApiResponse;
@@ -40,5 +41,23 @@ public class OwnerBusinessController {
         return ResponseEntity.ok(ApiResponse.success(
                 "Images uploaded",
                 ownerAuthService.uploadBusinessImages(authentication.getName(), logo, images, profileImage)));
+    }
+
+    @PatchMapping("/images/order")
+    public ResponseEntity<ApiResponse<OwnerResponse>> reorderImages(
+            Authentication authentication,
+            @Valid @RequestBody MediaOrderRequest request) {
+        return ResponseEntity.ok(ApiResponse.success(
+                "Gallery order updated",
+                ownerAuthService.reorderBusinessImages(authentication.getName(), request.getMediaIds())));
+    }
+
+    @DeleteMapping("/images/{mediaId}")
+    public ResponseEntity<ApiResponse<OwnerResponse>> deleteImage(
+            Authentication authentication,
+            @PathVariable String mediaId) {
+        return ResponseEntity.ok(ApiResponse.success(
+                "Gallery image removed",
+                ownerAuthService.deleteBusinessImage(authentication.getName(), mediaId)));
     }
 }

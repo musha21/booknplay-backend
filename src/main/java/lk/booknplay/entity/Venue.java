@@ -75,6 +75,11 @@ public class Venue {
     @Builder.Default
     private VenueStatus status = VenueStatus.DRAFT;
 
+    @Enumerated(EnumType.STRING)
+    @JdbcTypeCode(SqlTypes.VARCHAR)
+    @Column(name = "archived_from_status", length = 40)
+    private VenueStatus archivedFromStatus;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 

@@ -9,5 +9,7 @@ import java.util.List;
 @Repository
 public interface VenueImageRepository extends JpaRepository<VenueImage, String> {
     List<VenueImage> findByVenueIdOrderBySortOrderAsc(String venueId);
+    java.util.Optional<VenueImage> findByIdAndVenueId(String id, String venueId);
+    long countByVenueId(String venueId);
     void deleteByVenueId(String venueId);
 }
