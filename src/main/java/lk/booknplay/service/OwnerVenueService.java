@@ -10,9 +10,10 @@ import lk.booknplay.dto.response.OperatingHoursResponse;
 import lk.booknplay.dto.response.VenueResponse;
 
 import java.util.List;
+import org.springframework.web.multipart.MultipartFile;
 
 public interface OwnerVenueService {
-    List<VenueResponse> listVenues(String ownerEmail);
+    List<VenueResponse> listVenues(String ownerEmail, boolean archived);
     VenueResponse getVenue(String ownerEmail, String venueId);
     VenueResponse createVenue(String ownerEmail, OwnerVenueRequest request);
     VenueResponse updateVenue(String ownerEmail, String venueId, OwnerVenueRequest request);
@@ -22,4 +23,10 @@ public interface OwnerVenueService {
     CancellationPolicyResponse getCancellationPolicy(String ownerEmail);
     CancellationPolicyResponse upsertCancellationPolicy(String ownerEmail, CancellationPolicyRequest request);
     VenueResponse onboardVenue(String ownerEmail, VenueOnboardRequest request);
+    VenueResponse submitVenue(String ownerEmail, String venueId);
+    VenueResponse uploadMedia(String ownerEmail, String venueId, List<MultipartFile> images);
+    VenueResponse reorderMedia(String ownerEmail, String venueId, List<String> mediaIds);
+    VenueResponse deleteMedia(String ownerEmail, String venueId, String mediaId);
+    VenueResponse archiveVenue(String ownerEmail, String venueId);
+    VenueResponse restoreVenue(String ownerEmail, String venueId);
 }

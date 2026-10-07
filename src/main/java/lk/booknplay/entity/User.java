@@ -30,6 +30,18 @@ public class User implements UserDetails {
     @Column(nullable = false)
     private String password;
 
+    /** Normalized E.164 Sri Lankan mobile (+947XXXXXXXX). Nullable for legacy email-only users. */
+    @Column(name = "phone", unique = true)
+    private String phone;
+
+    @Builder.Default
+    @Column(name = "phone_verified", nullable = false)
+    private boolean phoneVerified = false;
+
+    @Builder.Default
+    @Column(name = "email_verified", nullable = false)
+    private boolean emailVerified = false;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private Role role;

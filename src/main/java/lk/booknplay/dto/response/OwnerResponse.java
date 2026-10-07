@@ -25,5 +25,6 @@ public class OwnerResponse {
     private String logoUrl;
     private String ownerProfileImageUrl;
     private List<String> imageUrls;
+    private List<MediaResponse> businessImages;
     private BigDecimal commissionPercent;
 }

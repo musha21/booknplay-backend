@@ -7,10 +7,12 @@ import lk.booknplay.entity.Booking;
 import lk.booknplay.entity.Business;
 import lk.booknplay.entity.Payout;
 import lk.booknplay.enums.BookingStatus;
+import lk.booknplay.enums.StaffPermission;
 import lk.booknplay.repository.BookingRepository;
 import lk.booknplay.repository.PayoutRepository;
 import lk.booknplay.service.OwnerAccessService;
 import lk.booknplay.service.OwnerEarningsService;
+import lk.booknplay.service.PlanEntitlementService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -33,14 +35,17 @@ public class OwnerEarningsServiceImpl implements OwnerEarningsService {
             List.copyOf(EnumSet.of(BookingStatus.CONFIRMED, BookingStatus.COMPLETED));
 
     private final OwnerAccessService ownerAccessService;
+    private final PlanEntitlementService planEntitlementService;
     private final BookingRepository bookingRepository;
     private final PayoutRepository payoutRepository;
 
     @Override
     @Transactional(readOnly = true)
-    public EarningsSummaryResponse getSummary(String ownerEmail, LocalDate from, LocalDate to) {
+    public EarningsSummaryResponse getSummary(String ownerEmail, LocalDate from, LocalDate to, String view) {
         Range range = resolveRange(from, to);
+        ownerAccessService.requireStaffPermission(ownerEmail, StaffPermission.EARNINGS);
         Business business = ownerAccessService.requireBusiness(ownerEmail);
+        assertEarningsView(business, view, range);
         List<Booking> bookings = bookingRepository.findForEarnings(
                 business.getId(), range.from(), range.to(), EARNING_STATUSES);
         BigDecimal percent = business.getCommissionPercent() != null
@@ -65,17 +70,32 @@ public class OwnerEarningsServiceImpl implements OwnerEarningsService {
 
     @Override
     @Transactional(readOnly = true)
-    public List<DailyEarningsResponse> getDaily(String ownerEmail, LocalDate from, LocalDate to) {
-        return getSummary(ownerEmail, from, to).getDaily();
+    public List<DailyEarningsResponse> getDaily(String ownerEmail, LocalDate from, LocalDate to, String view) {
+        return getSummary(ownerEmail, from, to, view).getDaily();
     }
 
     @Override
     @Transactional(readOnly = true)
     public List<PayoutResponse> listPayouts(String ownerEmail) {
+        ownerAccessService.requireStaffPermission(ownerEmail, StaffPermission.EARNINGS);
         Business business = ownerAccessService.requireBusiness(ownerEmail);
+        planEntitlementService.assertEarnings(business);
         return payoutRepository.findByBusinessIdOrderByPeriodStartDesc(business.getId()).stream()
                 .map(this::mapPayout)
                 .toList();
+    }
+
+    private void assertEarningsView(Business business, String view, Range range) {
+        boolean reportsView = view != null && view.equalsIgnoreCase("reports");
+        if (reportsView) {
+            planEntitlementService.assertReports(business);
+            long days = java.time.temporal.ChronoUnit.DAYS.between(range.from(), range.to()) + 1;
+            if (days > 31) {
+                planEntitlementService.assertAdvancedReports(business);
+            }
+        } else {
+            planEntitlementService.assertEarnings(business);
+        }
     }
 
     private List<DailyEarningsResponse> bucketDaily(List<Booking> bookings, BigDecimal percent) {

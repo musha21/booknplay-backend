@@ -12,6 +12,8 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.ArrayList;
+import java.util.List;
 
 @Data
 @Builder
@@ -32,6 +34,9 @@ public class BookingResponse {
     private LocalDate date;
     private LocalTime startTime;
     private LocalTime endTime;
+    /** Discrete booked hours; may be gapped. Empty for legacy envelope-only bookings. */
+    @Builder.Default
+    private List<BookingSlotResponse> slots = new ArrayList<>();
     private BigDecimal totalAmount;
     private String currency;
     private BookingStatus status;
@@ -40,4 +45,9 @@ public class BookingResponse {
     private String guestName;
     private String guestPhone;
     private LocalDateTime createdAt;
+    private boolean invoiceAvailable;
+    private String contactName;
+    private String contactEmail;
+    private String contactPhone;
+    private String specialRequests;
 }

@@ -41,4 +41,20 @@ public class FileStorageServiceImpl implements FileStorageService {
             throw new BadRequestException("Could not store image");
         }
     }
+
+    @Override
+    public void delete(String storedUrl) {
+        if (storedUrl == null || !storedUrl.startsWith("/uploads/")) {
+            return;
+        }
+        try {
+            Path root = Path.of(uploadDir).toAbsolutePath().normalize();
+            Path target = root.resolve(storedUrl.substring("/uploads/".length())).normalize();
+            if (target.startsWith(root)) {
+                Files.deleteIfExists(target);
+            }
+        } catch (IOException ignored) {
+            // The database remains authoritative. A missing/orphaned file must not break the request.
+        }
+    }
 }

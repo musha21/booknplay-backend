@@ -6,6 +6,7 @@ import lk.booknplay.entity.Venue;
 import lk.booknplay.enums.Role;
 import lk.booknplay.exception.ForbiddenException;
 import lk.booknplay.repository.BusinessRepository;
+import lk.booknplay.repository.BusinessStaffRepository;
 import lk.booknplay.repository.CourtRepository;
 import lk.booknplay.repository.UserRepository;
 import lk.booknplay.repository.VenueRepository;
@@ -29,6 +30,8 @@ class OwnerAccessServiceImplTest {
     private UserRepository userRepository;
     @Mock
     private BusinessRepository businessRepository;
+    @Mock
+    private BusinessStaffRepository businessStaffRepository;
     @Mock
     private VenueRepository venueRepository;
     @Mock
@@ -60,5 +63,14 @@ class OwnerAccessServiceImplTest {
 
         assertThrows(ForbiddenException.class,
                 () -> ownerAccessService.requireVenue("owner@example.com", "v-other"));
+    }
+
+    @Test
+    void requireOwner_Staff_ThrowsForbidden() {
+        User staff = User.builder().id("u-staff").email("staff@example.com").role(Role.STAFF).build();
+        when(userRepository.findByEmail("staff@example.com")).thenReturn(Optional.of(staff));
+
+        assertThrows(ForbiddenException.class,
+                () -> ownerAccessService.requireOwner("staff@example.com"));
     }
 }

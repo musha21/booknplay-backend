@@ -1,12 +1,13 @@
 package lk.booknplay.dto.request;
 
 import jakarta.validation.Valid;
-import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+
+import lk.booknplay.enums.PricingRuleType;
 
 import java.math.BigDecimal;
 import java.time.DayOfWeek;
@@ -19,7 +20,7 @@ import java.util.List;
 @AllArgsConstructor
 public class CourtPricingUpdateRequest {
 
-    @NotEmpty
+    @NotNull
     @Valid
     private List<PricingRule> rules;
 
@@ -36,5 +37,8 @@ public class CourtPricingUpdateRequest {
         private LocalTime endTime;
         @NotNull
         private BigDecimal price;
+        private PricingRuleType ruleType;
+        private Integer priority;
+        private String label;
     }
 }

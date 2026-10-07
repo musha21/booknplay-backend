@@ -30,6 +30,7 @@ public class VenueResponse {
     private String formattedAddress;
     private String coverImageUrl;
     private String businessImageUrl;
+    private String businessLogoUrl;
     private BigDecimal startingPrice;
     private String currency;
     private Double rating;
@@ -37,6 +38,7 @@ public class VenueResponse {
     private List<String> rules;
     private String additionalRules;
     private List<String> images;
+    private List<MediaResponse> media;
     private List<CourtResponse> courts;
     private int setupPercent;
 }

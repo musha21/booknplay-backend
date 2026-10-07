@@ -73,15 +73,18 @@ public class AvailabilityServiceImpl implements AvailabilityService {
             LocalDateTime periodStart = LocalDateTime.of(date, openTime);
             LocalDateTime periodEnd = LocalDateTime.of(date, closeTime);
             if (!closeTime.isAfter(openTime)) {
-                periodEnd = periodEnd.plusDays(1);
+                throw new BadRequestException("Overnight operating hours are not supported");
             }
             List<BlockedSlot> blockedSlots = blockedSlotRepository.findByCourtIdInAndDateBetween(
                     List.of(courtId), date, periodEnd.toLocalDate());
             List<MaintenanceWindow> maintenanceWindows = maintenanceWindowRepository.findOverlappingMaintenance(
                     courtId, periodStart, periodEnd
             );
-            List<Booking> activeBookings = bookingRepository.findByCourtIdInAndBookingDateBetweenAndStatusNot(
-                    List.of(courtId), date, periodEnd.toLocalDate(), BookingStatus.CANCELLED
+            List<Booking> activeBookings = bookingRepository.findWithSlotsByCourtIdInAndBookingDateBetweenAndStatusIn(
+                    List.of(courtId),
+                    date,
+                    periodEnd.toLocalDate(),
+                    List.of(BookingStatus.PENDING, BookingStatus.CONFIRMED)
             );
 
             LocalDateTime currentSlotStart = periodStart;
@@ -94,6 +97,11 @@ public class AvailabilityServiceImpl implements AvailabilityService {
 
                 boolean isAvailable = true;
                 String unavailableReason = null;
+
+                if (!currentSlotStart.isAfter(LocalDateTime.now())) {
+                    isAvailable = false;
+                    unavailableReason = "CLOSED";
+                }
 
                 // Check blocked slots
                 for (BlockedSlot bs : blockedSlots) {
@@ -117,29 +125,24 @@ public class AvailabilityServiceImpl implements AvailabilityService {
                     }
                 }
 
-                // Check active bookings
+                // Check holds + confirmed bookings (discrete slots when present; envelope for legacy)
                 if (isAvailable) {
                     for (Booking b : activeBookings) {
-                        LocalDateTime bookingStart = LocalDateTime.of(b.getBookingDate(), b.getStartTime());
-                        LocalDateTime bookingEnd = endDateTime(b.getBookingDate(), b.getStartTime(), b.getEndTime());
-                        if (overlaps(currentSlotStart, currentSlotEnd, bookingStart, bookingEnd)) {
+                        if (bookingOverlapsSlot(b, currentSlotStart, currentSlotEnd)) {
                             isAvailable = false;
-                            unavailableReason = "BOOKED";
-                            break;
+                            unavailableReason = b.getStatus() == BookingStatus.PENDING ? "HELD" : "BOOKED";
+                            if (unavailableReason.equals("BOOKED")) {
+                                break;
+                            }
                         }
                     }
                 }
 
-                // Determine price for slot
-                BigDecimal price = court.getHourlyRate();
-                for (CourtPricing cp : pricings) {
-                    LocalDateTime pricingStart = LocalDateTime.of(date, cp.getStartTime());
-                    LocalDateTime pricingEnd = endDateTime(date, cp.getStartTime(), cp.getEndTime());
-                    if (!currentSlotStart.isBefore(pricingStart) && !currentSlotEnd.isAfter(pricingEnd)) {
-                        price = cp.getPrice();
-                        break;
-                    }
-                }
+                BigDecimal price = lk.booknplay.util.CourtPriceResolver.resolve(
+                        court.getHourlyRate(),
+                        pricings,
+                        currentSlotStart.toLocalTime(),
+                        currentSlotEnd.toLocalTime());
 
                 slots.add(AvailabilitySlotResponse.builder()
                         .startTime(currentSlotStart.toLocalTime())
@@ -168,6 +171,22 @@ public class AvailabilityServiceImpl implements AvailabilityService {
     private static LocalDateTime endDateTime(LocalDate date, LocalTime startTime, LocalTime endTime) {
         LocalDateTime end = LocalDateTime.of(date, endTime);
         return endTime.isAfter(startTime) ? end : end.plusDays(1);
+    }
+
+    private static boolean bookingOverlapsSlot(Booking booking, LocalDateTime slotStart, LocalDateTime slotEnd) {
+        if (booking.getSlots() != null && !booking.getSlots().isEmpty()) {
+            for (BookingSlot booked : booking.getSlots()) {
+                LocalDateTime bookedStart = LocalDateTime.of(booking.getBookingDate(), booked.getStartTime());
+                LocalDateTime bookedEnd = endDateTime(booking.getBookingDate(), booked.getStartTime(), booked.getEndTime());
+                if (overlaps(slotStart, slotEnd, bookedStart, bookedEnd)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        LocalDateTime bookingStart = LocalDateTime.of(booking.getBookingDate(), booking.getStartTime());
+        LocalDateTime bookingEnd = endDateTime(booking.getBookingDate(), booking.getStartTime(), booking.getEndTime());
+        return overlaps(slotStart, slotEnd, bookingStart, bookingEnd);
     }
 
     private static boolean overlaps(

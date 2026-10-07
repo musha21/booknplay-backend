@@ -1,11 +1,13 @@
 package lk.booknplay.repository;
 
 import jakarta.persistence.LockModeType;
+import jakarta.persistence.QueryHint;
 import lk.booknplay.entity.Court;
 import lk.booknplay.enums.CourtStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.jpa.repository.QueryHints;
 import org.springframework.data.repository.query.Param;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Repository;
@@ -36,6 +38,7 @@ public interface CourtRepository extends JpaRepository<Court, String> {
             @Param("deleted") CourtStatus deleted);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @QueryHints(@QueryHint(name = "hibernate.query.followOnLocking", value = "false"))
     @Query("SELECT c FROM Court c WHERE c.id = :id")
     Optional<Court> findByIdWithLock(@Param("id") String id);
 }

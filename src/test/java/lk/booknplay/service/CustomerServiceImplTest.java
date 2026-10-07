@@ -9,6 +9,7 @@ import lk.booknplay.enums.Role;
 import lk.booknplay.exception.ConflictException;
 import lk.booknplay.repository.CustomerRepository;
 import lk.booknplay.repository.UserRepository;
+import lk.booknplay.security.jwt.JwtTokenProvider;
 import lk.booknplay.service.impl.CustomerServiceImpl;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -17,8 +18,6 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.password.PasswordEncoder;
-
-import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -36,6 +35,9 @@ class CustomerServiceImplTest {
     @Mock
     private PasswordEncoder passwordEncoder;
 
+    @Mock
+    private JwtTokenProvider jwtTokenProvider;
+
     @InjectMocks
     private CustomerServiceImpl customerService;
 
@@ -49,13 +51,16 @@ class CustomerServiceImplTest {
                 .email("john@example.com")
                 .password("password123")
                 .phone("+94771234567")
+                .verificationToken("tok")
                 .build();
     }
 
     @Test
     void createCustomer_Success() {
+        when(jwtTokenProvider.parsePhoneRegistrationToken("tok")).thenReturn("+94771234567");
         when(userRepository.existsByEmail("john@example.com")).thenReturn(false);
         when(customerRepository.existsByPhone("+94771234567")).thenReturn(false);
+        when(userRepository.existsByPhone("+94771234567")).thenReturn(false);
         when(passwordEncoder.encode("password123")).thenReturn("encodedPassword");
 
         User user = User.builder()
@@ -86,6 +91,7 @@ class CustomerServiceImplTest {
 
     @Test
     void createCustomer_DuplicateEmail_ThrowsConflictException() {
+        when(jwtTokenProvider.parsePhoneRegistrationToken("tok")).thenReturn("+94771234567");
         when(userRepository.existsByEmail("john@example.com")).thenReturn(true);
 
         assertThrows(ConflictException.class, () -> customerService.createCustomer(registerRequest));

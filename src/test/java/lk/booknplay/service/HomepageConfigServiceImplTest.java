@@ -23,8 +23,10 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.util.List;
 import java.util.Optional;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -37,6 +39,7 @@ class HomepageConfigServiceImplTest {
     @Mock private UserRepository users;
     @Mock private CourtRepository courts;
     @Mock private AdminAuditLogRepository audit;
+    @Mock private FileStorageService files;
     @Spy private ObjectMapper objectMapper = new ObjectMapper();
     @InjectMocks private HomepageConfigServiceImpl service;
 
@@ -78,5 +81,39 @@ class HomepageConfigServiceImplTest {
         when(users.findById("owner-1")).thenReturn(Optional.of(owner));
         when(venues.findByBusinessId("biz-1")).thenReturn(List.of(Venue.builder().id("v1").status(VenueStatus.ACTIVE).city("Kandy").build()));
         assertTrue(service.publicConfig().getPremiumSlides().isEmpty());
+    }
+
+    @Test
+    void publicConfig_keepsHomepageUploadImageUrl() {
+        when(configs.findFirstByStatusOrderByVersionDesc(HomepageConfigStatus.PUBLISHED)).thenReturn(Optional.of(
+                HomepageConfig.builder().id("pub").version(1).status(HomepageConfigStatus.PUBLISHED)
+                        .heading("Find a court").premiumSliderEnabled(true).premiumSliderSeconds(6)
+                        .premiumSlides("[{\"id\":\"s1\",\"businessId\":\"biz-1\",\"enabled\":true,\"imageUrl\":\"/uploads/homepage/x.jpg\"}]")
+                        .build()));
+        when(businesses.findById("biz-1")).thenReturn(Optional.of(business));
+        when(users.findById("owner-1")).thenReturn(Optional.of(owner));
+        when(venues.findByBusinessId("biz-1")).thenReturn(List.of(Venue.builder().id("v1").status(VenueStatus.ACTIVE).city("Kandy").build()));
+        assertEquals("/uploads/homepage/x.jpg", service.publicConfig().getPremiumSlides().get(0).getImageUrl());
+    }
+
+    @Test
+    void saveDraft_acceptsHomepageUploadImageUrl() {
+        request.getPremiumSlides().get(0).setImageUrl("/uploads/homepage/x.jpg");
+        HomepageConfig draft = HomepageConfig.builder()
+                .id("draft-1")
+                .version(2)
+                .status(HomepageConfigStatus.DRAFT)
+                .heading("Find a court")
+                .premiumSliderEnabled(true)
+                .premiumSliderSeconds(6)
+                .build();
+        when(businesses.findById("biz-1")).thenReturn(Optional.of(business));
+        when(users.findById("owner-1")).thenReturn(Optional.of(owner));
+        when(venues.findByBusinessId("biz-1")).thenReturn(List.of(Venue.builder().id("v1").status(VenueStatus.ACTIVE).city("Kandy").build()));
+        when(configs.findFirstByStatusOrderByVersionDesc(HomepageConfigStatus.DRAFT)).thenReturn(Optional.of(draft));
+        when(configs.save(any(HomepageConfig.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        var saved = service.saveDraft(request, "admin@booknplay.lk");
+        assertEquals("/uploads/homepage/x.jpg", saved.getPremiumSlides().get(0).getImageUrl());
     }
 }

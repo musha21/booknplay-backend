@@ -11,4 +11,5 @@ public interface BusinessImageRepository extends JpaRepository<BusinessImage, St
     List<BusinessImage> findByBusinessIdOrderBySortOrderAsc(String businessId);
     void deleteByBusinessIdAndLogoFalse(String businessId);
     long countByBusinessId(String businessId);
+    java.util.Optional<BusinessImage> findByIdAndBusinessId(String id, String businessId);
 }

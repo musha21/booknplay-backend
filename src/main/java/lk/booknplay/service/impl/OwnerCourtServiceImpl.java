@@ -16,6 +16,7 @@ import lk.booknplay.repository.CourtRepository;
 import lk.booknplay.repository.SportRepository;
 import lk.booknplay.service.OwnerAccessService;
 import lk.booknplay.service.OwnerCourtService;
+import lk.booknplay.service.PlanEntitlementService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,6 +28,7 @@ import java.util.List;
 public class OwnerCourtServiceImpl implements OwnerCourtService {
 
     private final OwnerAccessService ownerAccessService;
+    private final PlanEntitlementService planEntitlementService;
     private final CourtRepository courtRepository;
     private final SportRepository sportRepository;
     private final CourtPricingRepository courtPricingRepository;
@@ -50,7 +52,8 @@ public class OwnerCourtServiceImpl implements OwnerCourtService {
     @Override
     @Transactional
     public CourtResponse createCourt(String ownerEmail, String venueId, OwnerCourtRequest request) {
-        Venue venue = ownerAccessService.requireVenue(ownerEmail, venueId);
+        Venue venue = ownerAccessService.requireMutableVenue(ownerEmail, venueId);
+        planEntitlementService.assertCanCreateCourt(venue.getBusiness(), venueId);
         Sport sport = sportRepository.findById(request.getSportId())
                 .orElseThrow(() -> new ResourceNotFoundException("Sport not found with id: " + request.getSportId()));
         Court court = Court.builder()
@@ -66,7 +69,7 @@ public class OwnerCourtServiceImpl implements OwnerCourtService {
     @Override
     @Transactional
     public CourtResponse updateCourt(String ownerEmail, String courtId, OwnerCourtRequest request) {
-        Court court = ownerAccessService.requireCourt(ownerEmail, courtId);
+        Court court = ownerAccessService.requireMutableCourt(ownerEmail, courtId);
         Sport sport = sportRepository.findById(request.getSportId())
                 .orElseThrow(() -> new ResourceNotFoundException("Sport not found with id: " + request.getSportId()));
         court.setName(request.getName());
@@ -78,7 +81,7 @@ public class OwnerCourtServiceImpl implements OwnerCourtService {
     @Override
     @Transactional
     public void deleteCourt(String ownerEmail, String courtId) {
-        Court court = ownerAccessService.requireCourt(ownerEmail, courtId);
+        Court court = ownerAccessService.requireMutableCourt(ownerEmail, courtId);
         court.setStatus(CourtStatus.DELETED);
         courtRepository.save(court);
     }
@@ -93,22 +96,34 @@ public class OwnerCourtServiceImpl implements OwnerCourtService {
     @Override
     @Transactional
     public List<CourtPricingResponse> replacePricing(String ownerEmail, String courtId, CourtPricingUpdateRequest request) {
-        Court court = ownerAccessService.requireCourt(ownerEmail, courtId);
-        for (CourtPricingUpdateRequest.PricingRule rule : request.getRules()) {
+        Court court = ownerAccessService.requireMutableCourt(ownerEmail, courtId);
+        List<CourtPricingUpdateRequest.PricingRule> rules =
+                request.getRules() != null ? request.getRules() : List.of();
+        for (CourtPricingUpdateRequest.PricingRule rule : rules) {
             if (!rule.getStartTime().isBefore(rule.getEndTime())) {
                 throw new BadRequestException("Pricing start time must be before end time");
             }
         }
         courtPricingRepository.deleteByCourtId(courtId);
         courtPricingRepository.flush();
-        return request.getRules().stream()
-                .map(rule -> CourtPricing.builder()
-                        .court(court)
-                        .dayOfWeek(rule.getDayOfWeek())
-                        .startTime(rule.getStartTime())
-                        .endTime(rule.getEndTime())
-                        .price(rule.getPrice())
-                        .build())
+        return rules.stream()
+                .map(rule -> {
+                    var ruleType = lk.booknplay.util.CourtPriceResolver.inferType(
+                            rule.getDayOfWeek(), rule.getRuleType());
+                    Integer priority = rule.getPriority() != null
+                            ? rule.getPriority()
+                            : lk.booknplay.util.CourtPriceResolver.defaultPriority(ruleType);
+                    return CourtPricing.builder()
+                            .court(court)
+                            .dayOfWeek(rule.getDayOfWeek())
+                            .startTime(rule.getStartTime())
+                            .endTime(rule.getEndTime())
+                            .price(rule.getPrice())
+                            .ruleType(ruleType)
+                            .priority(priority)
+                            .label(rule.getLabel())
+                            .build();
+                })
                 .map(courtPricingRepository::save)
                 .map(this::mapPricing)
                 .toList();
@@ -134,6 +149,9 @@ public class OwnerCourtServiceImpl implements OwnerCourtService {
                 .startTime(pricing.getStartTime())
                 .endTime(pricing.getEndTime())
                 .price(pricing.getPrice())
+                .ruleType(lk.booknplay.util.CourtPriceResolver.effectiveType(pricing))
+                .priority(lk.booknplay.util.CourtPriceResolver.effectivePriority(pricing))
+                .label(pricing.getLabel())
                 .build();
     }
 }

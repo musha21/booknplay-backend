@@ -5,6 +5,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import lk.booknplay.enums.PricingRuleType;
+
 import java.math.BigDecimal;
 import java.time.DayOfWeek;
 import java.time.LocalTime;
@@ -19,4 +21,7 @@ public class CourtPricingResponse {
     private LocalTime startTime;
     private LocalTime endTime;
     private BigDecimal price;
+    private PricingRuleType ruleType;
+    private Integer priority;
+    private String label;
 }

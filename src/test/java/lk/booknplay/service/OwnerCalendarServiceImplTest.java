@@ -1,13 +1,17 @@
 package lk.booknplay.service;
 
+import lk.booknplay.dto.request.BookingStatusUpdateRequest;
 import lk.booknplay.dto.request.WalkInBookingRequest;
 import lk.booknplay.dto.response.AvailabilityResponse;
+import lk.booknplay.dto.response.BookingCancellationResponse;
+import lk.booknplay.dto.response.BookingResponse;
 import lk.booknplay.dto.response.OwnerCalendarResponse;
 import lk.booknplay.entity.Booking;
 import lk.booknplay.entity.Court;
 import lk.booknplay.entity.OperatingHours;
 import lk.booknplay.entity.Sport;
 import lk.booknplay.entity.Venue;
+import lk.booknplay.enums.BookingSource;
 import lk.booknplay.enums.BookingStatus;
 import lk.booknplay.enums.CourtStatus;
 import lk.booknplay.exception.BadRequestException;
@@ -39,11 +43,14 @@ import java.util.stream.IntStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -55,6 +62,7 @@ class OwnerCalendarServiceImplTest {
     private static final LocalDate DATE = LocalDate.of(2026, 9, 21); // Monday
 
     @Mock private OwnerAccessService ownerAccessService;
+    @Mock private PlanEntitlementService planEntitlementService;
     @Mock private CourtRepository courtRepository;
     @Mock private OperatingHoursRepository operatingHoursRepository;
     @Mock private CourtPricingRepository courtPricingRepository;
@@ -62,6 +70,8 @@ class OwnerCalendarServiceImplTest {
     @Mock private MaintenanceWindowRepository maintenanceWindowRepository;
     @Mock private BookingRepository bookingRepository;
     @Mock private PaymentRepository paymentRepository;
+    @Mock private BookingRulesService bookingRulesService;
+    @Mock private BookingService bookingService;
 
     @InjectMocks private OwnerCalendarServiceImpl ownerCalendarService;
 
@@ -114,8 +124,9 @@ class OwnerCalendarServiceImplTest {
         assertEquals(8, response.getCourts().get(0).getSlots().size());
         assertEquals(LocalTime.MIDNIGHT, response.getCourts().get(0).getSlots().get(5).getEndTime());
         assertEquals(LocalTime.of(2, 0), response.getCourts().get(0).getSlots().get(7).getEndTime());
-        verify(bookingRepository).findByCourtIdInAndBookingDateBetweenAndStatusNot(
-                List.of("crt-1"), DATE, DATE.plusDays(1), BookingStatus.CANCELLED);
+        verify(bookingRepository).findWithSlotsByCourtIdInAndBookingDateBetweenAndStatusIn(
+                List.of("crt-1"), DATE, DATE.plusDays(1),
+                List.of(BookingStatus.PENDING, BookingStatus.CONFIRMED));
     }
 
     @Test
@@ -127,8 +138,8 @@ class OwnerCalendarServiceImplTest {
 
         assertEquals(2, response.getCourts().size());
         assertTrue(response.getCourts().stream().allMatch(day -> day.getSlots().size() == 3));
-        verify(bookingRepository, times(1)).findByCourtIdInAndBookingDateBetweenAndStatusNot(
-                anyList(), any(), any(), any());
+        verify(bookingRepository, times(1)).findWithSlotsByCourtIdInAndBookingDateBetweenAndStatusIn(
+                anyList(), any(), any(), anyList());
         verify(blockedSlotRepository, times(1)).findByCourtIdInAndDateBetween(anyList(), any(), any());
         verify(maintenanceWindowRepository, times(1)).findOverlappingMaintenanceForCourts(anyList(), any(), any());
         verify(courtPricingRepository, times(1)).findByCourtIdInAndDayOfWeek(anyList(), any());
@@ -137,7 +148,7 @@ class OwnerCalendarServiceImplTest {
     @Test
     void adjacentBookingBlocksOnlyItsOwnInterval() {
         stubCalendar(List.of(court), hours(17, 0, 19, 0));
-        when(bookingRepository.findByCourtIdInAndBookingDateBetweenAndStatusNot(anyList(), any(), any(), any()))
+        when(bookingRepository.findWithSlotsByCourtIdInAndBookingDateBetweenAndStatusIn(anyList(), any(), any(), anyList()))
                 .thenReturn(List.of(booking(court, DATE, 17, 0, 18, 0)));
 
         AvailabilityResponse day = ownerCalendarService.getCalendar(OWNER_EMAIL, venue.getId(), DATE, null)
@@ -149,9 +160,25 @@ class OwnerCalendarServiceImplTest {
     }
 
     @Test
+    void pendingBookingMarksSlotHeld() {
+        stubCalendar(List.of(court), hours(17, 0, 19, 0));
+        Booking pending = booking(court, DATE, 17, 0, 18, 0);
+        pending.setStatus(BookingStatus.PENDING);
+        when(bookingRepository.findWithSlotsByCourtIdInAndBookingDateBetweenAndStatusIn(anyList(), any(), any(), anyList()))
+                .thenReturn(List.of(pending));
+
+        AvailabilityResponse day = ownerCalendarService.getCalendar(OWNER_EMAIL, venue.getId(), DATE, null)
+                .getCourts().get(0);
+
+        assertFalse(day.getSlots().get(0).isAvailable());
+        assertEquals("HELD", day.getSlots().get(0).getReason());
+        assertTrue(day.getSlots().get(1).isAvailable());
+    }
+
+    @Test
     void fullyBookedDayHasNoAvailableSlots() {
         stubCalendar(List.of(court), hours(17, 0, 19, 0));
-        when(bookingRepository.findByCourtIdInAndBookingDateBetweenAndStatusNot(anyList(), any(), any(), any()))
+        when(bookingRepository.findWithSlotsByCourtIdInAndBookingDateBetweenAndStatusIn(anyList(), any(), any(), anyList()))
                 .thenReturn(List.of(
                         booking(court, DATE, 17, 0, 18, 0),
                         booking(court, DATE, 18, 0, 19, 0)));
@@ -224,11 +251,81 @@ class OwnerCalendarServiceImplTest {
     @Test
     void createWalkInOverlappingSlotThrowsConflictException() {
         when(courtRepository.findByIdWithLock("crt-1")).thenReturn(Optional.of(court));
-        when(ownerAccessService.requireVenue(OWNER_EMAIL, "v-1")).thenReturn(venue);
-        when(bookingRepository.existsOverlappingBooking(any(), any(), any(), any())).thenReturn(true);
+        when(ownerAccessService.requireMutableVenue(OWNER_EMAIL, "v-1")).thenReturn(venue);
+        when(bookingRulesService.validateAndPrice(any(), any(), any(), any(), any(), anyBoolean()))
+                .thenThrow(new ConflictException("COURT_ALREADY_BOOKED", "The court is already booked for the selected time slot."));
 
-        assertThrows(ConflictException.class,
+        ConflictException error = assertThrows(ConflictException.class,
                 () -> ownerCalendarService.createWalkIn(OWNER_EMAIL, walkInRequest));
+        assertEquals("COURT_ALREADY_BOOKED", error.getCode());
+    }
+
+    @Test
+    void createWalkInPersistsSlotsAndContactFieldsWithoutCustomer() {
+        when(courtRepository.findByIdWithLock("crt-1")).thenReturn(Optional.of(court));
+        when(ownerAccessService.requireMutableVenue(OWNER_EMAIL, "v-1")).thenReturn(venue);
+        when(bookingRulesService.validateAndPrice(any(), any(), any(), any(), any(), anyBoolean()))
+                .thenReturn(new BookingRulesService.Result(
+                        BigDecimal.valueOf(3000),
+                        List.of(new BookingRulesService.SlotPrice(
+                                LocalTime.of(18, 0), LocalTime.of(19, 0), BigDecimal.valueOf(3000)))));
+        when(bookingRepository.save(any(Booking.class))).thenAnswer(inv -> {
+            Booking saved = inv.getArgument(0);
+            saved.setId("b-walk-1");
+            return saved;
+        });
+
+        BookingResponse response = ownerCalendarService.createWalkIn(OWNER_EMAIL, walkInRequest);
+
+        assertEquals(BookingSource.WALK_IN, response.getSource());
+        assertEquals(BookingStatus.CONFIRMED, response.getStatus());
+        assertNull(response.getPaymentStatus());
+        assertEquals("Walk In Guest", response.getGuestName());
+        assertEquals("+94770001111", response.getGuestPhone());
+        assertEquals("Walk In Guest", response.getContactName());
+        assertEquals("+94770001111", response.getContactPhone());
+        assertNull(response.getCustomerId());
+
+        org.mockito.ArgumentCaptor<Booking> bookingCaptor = org.mockito.ArgumentCaptor.forClass(Booking.class);
+        verify(bookingRepository).save(bookingCaptor.capture());
+        verify(paymentRepository, never()).save(any());
+        Booking saved = bookingCaptor.getValue();
+        assertNull(saved.getCustomer());
+        assertEquals(1, saved.getSlots().size());
+        assertEquals(LocalTime.of(18, 0), saved.getSlots().get(0).getStartTime());
+        assertEquals(LocalTime.of(19, 0), saved.getSlots().get(0).getEndTime());
+    }
+
+    @Test
+    void updateBookingStatusCancelDelegatesToOwnerCancel() {
+        Booking existing = Booking.builder()
+                .id("b-1")
+                .venue(venue)
+                .court(court)
+                .sport(court.getSport())
+                .status(BookingStatus.CONFIRMED)
+                .source(BookingSource.WALK_IN)
+                .guestName("Walk In Guest")
+                .build();
+        when(bookingRepository.findById("b-1")).thenReturn(Optional.of(existing));
+        when(ownerAccessService.requireMutableVenue(OWNER_EMAIL, "v-1")).thenReturn(venue);
+        when(bookingService.cancelBookingAsOwner(eq("b-1"), any()))
+                .thenReturn(BookingCancellationResponse.builder()
+                        .booking(BookingResponse.builder()
+                                .id("b-1")
+                                .status(BookingStatus.CANCELLED)
+                                .source(BookingSource.WALK_IN)
+                                .guestName("Walk In Guest")
+                                .build())
+                        .build());
+
+        BookingResponse response = ownerCalendarService.updateBookingStatus(
+                OWNER_EMAIL,
+                "b-1",
+                BookingStatusUpdateRequest.builder().status(BookingStatus.CANCELLED).build());
+
+        assertEquals(BookingStatus.CANCELLED, response.getStatus());
+        verify(bookingService).cancelBookingAsOwner(eq("b-1"), any());
     }
 
     private void stubCalendar(List<Court> courts, OperatingHours operatingHours) {
@@ -239,7 +336,7 @@ class OwnerCalendarServiceImplTest {
         when(courtPricingRepository.findByCourtIdInAndDayOfWeek(anyList(), any())).thenReturn(List.of());
         when(blockedSlotRepository.findByCourtIdInAndDateBetween(anyList(), any(), any())).thenReturn(List.of());
         when(maintenanceWindowRepository.findOverlappingMaintenanceForCourts(anyList(), any(), any())).thenReturn(List.of());
-        when(bookingRepository.findByCourtIdInAndBookingDateBetweenAndStatusNot(anyList(), any(), any(), any()))
+        when(bookingRepository.findWithSlotsByCourtIdInAndBookingDateBetweenAndStatusIn(anyList(), any(), any(), anyList()))
                 .thenReturn(List.of());
     }
 

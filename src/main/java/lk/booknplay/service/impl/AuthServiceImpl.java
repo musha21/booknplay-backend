@@ -8,6 +8,8 @@ import lk.booknplay.dto.response.CustomerResponse;
 import lk.booknplay.entity.Customer;
 import lk.booknplay.entity.RefreshToken;
 import lk.booknplay.entity.User;
+import lk.booknplay.enums.Role;
+import lk.booknplay.exception.BadRequestException;
 import lk.booknplay.exception.UnauthorizedException;
 import lk.booknplay.repository.CustomerRepository;
 import lk.booknplay.repository.RefreshTokenRepository;
@@ -16,6 +18,7 @@ import lk.booknplay.security.jwt.JwtProperties;
 import lk.booknplay.security.jwt.JwtTokenProvider;
 import lk.booknplay.service.AuthService;
 import lk.booknplay.service.CustomerService;
+import lk.booknplay.util.PhoneNumberUtil;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -59,37 +62,24 @@ public class AuthServiceImpl implements AuthService {
     @Override
     @Transactional
     public AuthResponse login(CustomerLoginRequest request) {
-        authenticationManager.authenticate(
-                new UsernamePasswordAuthenticationToken(request.getEmail(), request.getPassword())
-        );
+        String loginEmail = resolveLoginEmail(request);
 
-        User user = userRepository.findByEmail(request.getEmail())
-                .orElseThrow(() -> new UnauthorizedException("Invalid email or password"));
+        try {
+            authenticationManager.authenticate(
+                    new UsernamePasswordAuthenticationToken(loginEmail, request.getPassword())
+            );
+        } catch (Exception ex) {
+            throw new UnauthorizedException("Invalid phone/email or password");
+        }
 
-        Customer customer = customerRepository.findByUserId(user.getId())
-                .orElseThrow(() -> new UnauthorizedException("Customer record not found"));
+        User user = userRepository.findByEmail(loginEmail)
+                .orElseThrow(() -> new UnauthorizedException("Invalid phone/email or password"));
 
-        String accessToken = tokenProvider.generateAccessToken(user, customer.getId());
-        String refreshToken = createRefreshToken(user);
+        if (user.getRole() != Role.CUSTOMER) {
+            throw new UnauthorizedException("Invalid phone/email or password");
+        }
 
-        CustomerResponse customerResponse = CustomerResponse.builder()
-                .id(customer.getId())
-                .firstName(customer.getFirstName())
-                .lastName(customer.getLastName())
-                .email(user.getEmail())
-                .phone(customer.getPhone())
-                .profileImage(customer.getProfileImage())
-                .status(customer.getStatus())
-                .createdAt(customer.getCreatedAt())
-                .build();
-
-        return AuthResponse.builder()
-                .accessToken(accessToken)
-                .refreshToken(refreshToken)
-                .expiresInMs(jwtProperties.getAccessTokenExpiryMs())
-                .role(user.getRole())
-                .customer(customerResponse)
-                .build();
+        return issueTokensForCustomer(user);
     }
 
     @Override
@@ -106,25 +96,12 @@ public class AuthServiceImpl implements AuthService {
         Customer customer = customerRepository.findByUserId(user.getId())
                 .orElseThrow(() -> new UnauthorizedException("Customer record not found"));
 
-        String newAccessToken = tokenProvider.generateAccessToken(user, customer.getId());
-
-        CustomerResponse customerResponse = CustomerResponse.builder()
-                .id(customer.getId())
-                .firstName(customer.getFirstName())
-                .lastName(customer.getLastName())
-                .email(user.getEmail())
-                .phone(customer.getPhone())
-                .profileImage(customer.getProfileImage())
-                .status(customer.getStatus())
-                .createdAt(customer.getCreatedAt())
-                .build();
-
         return AuthResponse.builder()
-                .accessToken(newAccessToken)
+                .accessToken(tokenProvider.generateAccessToken(user, customer.getId()))
                 .refreshToken(token.getToken())
                 .expiresInMs(jwtProperties.getAccessTokenExpiryMs())
                 .role(user.getRole())
-                .customer(customerResponse)
+                .customer(mapCustomer(customer, user))
                 .build();
     }
 
@@ -135,6 +112,56 @@ public class AuthServiceImpl implements AuthService {
             token.setRevoked(true);
             refreshTokenRepository.save(token);
         });
+    }
+
+    @Override
+    @Transactional
+    public AuthResponse issueTokensForCustomer(User user) {
+        Customer customer = customerRepository.findByUserId(user.getId())
+                .orElseThrow(() -> new UnauthorizedException("Customer record not found"));
+
+        String accessToken = tokenProvider.generateAccessToken(user, customer.getId());
+        String refreshToken = createRefreshToken(user);
+
+        return AuthResponse.builder()
+                .accessToken(accessToken)
+                .refreshToken(refreshToken)
+                .expiresInMs(jwtProperties.getAccessTokenExpiryMs())
+                .role(user.getRole())
+                .customer(mapCustomer(customer, user))
+                .build();
+    }
+
+    private String resolveLoginEmail(CustomerLoginRequest request) {
+        if (request.getEmail() != null && !request.getEmail().isBlank()) {
+            return request.getEmail().trim();
+        }
+        if (request.getPhone() == null || request.getPhone().isBlank()) {
+            throw new BadRequestException("Email or phone is required");
+        }
+        String phone = PhoneNumberUtil.normalizeSriLanka(request.getPhone());
+        User byUserPhone = userRepository.findByPhone(phone).orElse(null);
+        if (byUserPhone != null && byUserPhone.getRole() == Role.CUSTOMER) {
+            return byUserPhone.getEmail();
+        }
+        Customer customer = customerRepository.findByPhone(phone).orElse(null);
+        if (customer != null && customer.getUser() != null) {
+            return customer.getUser().getEmail();
+        }
+        throw new UnauthorizedException("Invalid phone/email or password");
+    }
+
+    private static CustomerResponse mapCustomer(Customer customer, User user) {
+        return CustomerResponse.builder()
+                .id(customer.getId())
+                .firstName(customer.getFirstName())
+                .lastName(customer.getLastName())
+                .email(user.getEmail())
+                .phone(customer.getPhone())
+                .profileImage(customer.getProfileImage())
+                .status(customer.getStatus())
+                .createdAt(customer.getCreatedAt())
+                .build();
     }
 
     private String createRefreshToken(User user) {

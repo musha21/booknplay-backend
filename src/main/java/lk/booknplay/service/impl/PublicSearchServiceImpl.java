@@ -110,13 +110,17 @@ public class PublicSearchServiceImpl implements PublicSearchService {
                 .filter(name -> name != null && !name.isBlank())
                 .findFirst()
                 .orElse(venue.getVenueType());
-        String businessImage = venue.getBusiness() != null ? venue.getBusiness().getLogoUrl() : null;
-        List<String> imageUrls = venue.getImages() == null
+        String businessLogo = venue.getBusiness() != null ? venue.getBusiness().getLogoUrl() : null;
+        List<lk.booknplay.entity.VenueImage> orderedImages = venue.getImages() == null
                 ? List.of()
-                : venue.getImages().stream().map(img -> img.getUrl()).filter(url -> url != null && !url.isBlank()).toList();
+                : venue.getImages().stream()
+                        .filter(img -> img.getUrl() != null && !img.getUrl().isBlank())
+                        .sorted(java.util.Comparator.comparingInt(lk.booknplay.entity.VenueImage::getSortOrder))
+                        .toList();
+        List<String> imageUrls = orderedImages.stream().map(lk.booknplay.entity.VenueImage::getUrl).toList();
         String cover = venue.getCoverImageUrl();
         if (cover == null || cover.isBlank()) {
-            cover = imageUrls.isEmpty() ? businessImage : imageUrls.get(0);
+            cover = imageUrls.isEmpty() ? businessLogo : imageUrls.get(0);
         }
         return VenueResponse.builder()
                 .id(venue.getId())
@@ -133,13 +137,21 @@ public class PublicSearchServiceImpl implements PublicSearchService {
                 .description(venue.getDescription())
                 .status(venue.getStatus())
                 .coverImageUrl(cover)
-                .businessImageUrl(businessImage)
+                .businessImageUrl(businessLogo)
+                .businessLogoUrl(businessLogo)
                 .startingPrice(starting)
                 .currency("LKR")
                 .amenities(copyList(venue.getAmenities()))
                 .rules(copyList(venue.getRules()))
                 .additionalRules(venue.getAdditionalRules())
                 .images(imageUrls)
+                .media(orderedImages.stream()
+                        .map(img -> lk.booknplay.dto.response.MediaResponse.builder()
+                                .id(img.getId())
+                                .url(img.getUrl())
+                                .sortOrder(img.getSortOrder())
+                                .build())
+                        .toList())
                 .build();
     }
 

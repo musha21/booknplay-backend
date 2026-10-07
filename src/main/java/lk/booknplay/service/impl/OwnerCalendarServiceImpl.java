@@ -10,12 +10,17 @@ import lk.booknplay.enums.BookingSource;
 import lk.booknplay.enums.BookingStatus;
 import lk.booknplay.enums.CourtStatus;
 import lk.booknplay.enums.PaymentStatus;
+import lk.booknplay.enums.StaffPermission;
 import lk.booknplay.exception.BadRequestException;
 import lk.booknplay.exception.ConflictException;
 import lk.booknplay.exception.ResourceNotFoundException;
 import lk.booknplay.repository.*;
 import lk.booknplay.service.OwnerAccessService;
 import lk.booknplay.service.OwnerCalendarService;
+import lk.booknplay.service.BookingRulesService;
+import lk.booknplay.service.BookingService;
+import lk.booknplay.service.PlanEntitlementService;
+import lk.booknplay.util.BookingTimeFormat;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
@@ -50,6 +55,7 @@ public class OwnerCalendarServiceImpl implements OwnerCalendarService {
             EnumSet.of(BookingStatus.NO_SHOW, BookingStatus.COMPLETED, BookingStatus.CANCELLED);
 
     private final OwnerAccessService ownerAccessService;
+    private final PlanEntitlementService planEntitlementService;
     private final CourtRepository courtRepository;
     private final OperatingHoursRepository operatingHoursRepository;
     private final CourtPricingRepository courtPricingRepository;
@@ -57,6 +63,8 @@ public class OwnerCalendarServiceImpl implements OwnerCalendarService {
     private final MaintenanceWindowRepository maintenanceWindowRepository;
     private final BookingRepository bookingRepository;
     private final PaymentRepository paymentRepository;
+    private final BookingRulesService bookingRulesService;
+    private final BookingService bookingService;
 
     @Value("${booknplay.calendar.slot-duration-minutes:60}")
     private int slotDurationMinutes = 60;
@@ -71,7 +79,9 @@ public class OwnerCalendarServiceImpl implements OwnerCalendarService {
         if (date.equals(LocalDate.MAX)) {
             throw new BadRequestException("Calendar date is outside the supported range");
         }
+        ownerAccessService.requireStaffPermission(ownerEmail, StaffPermission.CALENDAR);
         Venue venue = ownerAccessService.requireVenue(ownerEmail, venueId);
+        planEntitlementService.assertCalendarAccess(venue.getBusiness());
         List<Court> courts = courtId == null || courtId.isBlank()
                 ? courtRepository.findCalendarCourts(
                         venueId, CourtStatus.DELETED, PageRequest.of(0, MAX_COURTS_PER_RESPONSE + 1))
@@ -109,8 +119,11 @@ public class OwnerCalendarServiceImpl implements OwnerCalendarService {
                     courtIds, date, periodEnd.toLocalDate()));
             maintenanceByCourt = groupByCourt(maintenanceWindowRepository.findOverlappingMaintenanceForCourts(
                     courtIds, periodStart, periodEnd));
-            bookingsByCourt = groupByCourt(bookingRepository.findByCourtIdInAndBookingDateBetweenAndStatusNot(
-                    courtIds, date, periodEnd.toLocalDate(), BookingStatus.CANCELLED));
+            bookingsByCourt = groupByCourt(bookingRepository.findWithSlotsByCourtIdInAndBookingDateBetweenAndStatusIn(
+                    courtIds,
+                    date,
+                    periodEnd.toLocalDate(),
+                    List.of(BookingStatus.PENDING, BookingStatus.CONFIRMED)));
         }
 
         Map<String, List<CourtPricing>> finalPricingsByCourt = pricingsByCourt;
@@ -141,29 +154,27 @@ public class OwnerCalendarServiceImpl implements OwnerCalendarService {
             throw new BadRequestException("Start time must be before end time");
         }
 
+        ownerAccessService.requireStaffPermission(ownerEmail, StaffPermission.WALK_INS);
         Court court = courtRepository.findByIdWithLock(request.getCourtId())
                 .orElseThrow(() -> new ResourceNotFoundException("Court not found with id: " + request.getCourtId()));
-        ownerAccessService.requireVenue(ownerEmail, court.getVenue().getId());
+        ownerAccessService.requireMutableVenue(ownerEmail, court.getVenue().getId());
+        planEntitlementService.assertWalkIn(court.getVenue().getBusiness());
 
         if (court.getStatus() != CourtStatus.ACTIVE) {
             throw new BadRequestException("Court is currently inactive");
         }
 
-        if (bookingRepository.existsOverlappingBooking(
-                court.getId(), request.getDate(), request.getStartTime(), request.getEndTime())) {
-            throw new ConflictException("COURT_ALREADY_BOOKED", "The court is already booked for the selected time slot.");
-        }
-
-        long hours = Duration.between(request.getStartTime(), request.getEndTime()).toHours();
-        if (hours <= 0) {
-            hours = 1;
-        }
+        BookingRulesService.Result priced = bookingRulesService.validateAndPrice(
+                court, court.getSport(), request.getDate(), request.getStartTime(), request.getEndTime(), false);
         BigDecimal totalAmount = request.getAmount() != null
                 ? request.getAmount()
-                : court.getHourlyRate().multiply(BigDecimal.valueOf(hours));
+                : priced.totalAmount();
 
         String bookingRef = "BNP-WI-" + request.getDate().toString().replace("-", "") + "-"
                 + UUID.randomUUID().toString().substring(0, 6).toUpperCase();
+
+        String guestName = request.getGuestName().trim();
+        String guestPhone = request.getGuestPhone() == null ? null : request.getGuestPhone().trim();
 
         Booking booking = Booking.builder()
                 .bookingRef(bookingRef)
@@ -176,21 +187,24 @@ public class OwnerCalendarServiceImpl implements OwnerCalendarService {
                 .totalAmount(totalAmount)
                 .status(BookingStatus.CONFIRMED)
                 .source(BookingSource.WALK_IN)
-                .guestName(request.getGuestName())
-                .guestPhone(request.getGuestPhone())
+                .guestName(guestName)
+                .guestPhone(guestPhone)
+                .contactName(guestName)
+                .contactPhone(guestPhone)
                 .build();
+
+        for (BookingRulesService.SlotPrice slot : priced.slots()) {
+            booking.getSlots().add(BookingSlot.builder()
+                    .booking(booking)
+                    .startTime(slot.startTime())
+                    .endTime(slot.endTime())
+                    .price(slot.price())
+                    .build());
+        }
 
         Booking saved = bookingRepository.save(booking);
 
-        paymentRepository.save(Payment.builder()
-                .booking(saved)
-                .amount(totalAmount)
-                .currency("LKR")
-                .paymentGateway("WALK_IN_CASH")
-                .status(PaymentStatus.PAID)
-                .build());
-
-        return mapBooking(saved, PaymentStatus.PAID);
+        return mapBooking(saved, null);
     }
 
     @Override
@@ -201,19 +215,26 @@ public class OwnerCalendarServiceImpl implements OwnerCalendarService {
         }
         Booking booking = bookingRepository.findById(bookingId)
                 .orElseThrow(() -> new ResourceNotFoundException("Booking not found with id: " + bookingId));
-        ownerAccessService.requireVenue(ownerEmail, booking.getVenue().getId());
+        ownerAccessService.requireMutableVenue(ownerEmail, booking.getVenue().getId());
+        if (request.getStatus() == BookingStatus.CANCELLED) {
+            return bookingService.cancelBookingAsOwner(bookingId, "Venue owner cancelled booking").getBooking();
+        }
+        if (booking.getStatus() != BookingStatus.CONFIRMED) {
+            throw new BadRequestException("Only a confirmed booking can be completed or marked as a no-show");
+        }
         booking.setStatus(request.getStatus());
         Booking saved = bookingRepository.save(booking);
         PaymentStatus paymentStatus = paymentRepository.findByBookingId(saved.getId())
                 .map(Payment::getStatus)
-                .orElse(PaymentStatus.INITIATED);
+                .orElse(null);
         return mapBooking(saved, paymentStatus);
     }
 
     @Override
     @Transactional
     public MaintenanceWindowResponse addMaintenance(String ownerEmail, String courtId, MaintenanceWindowRequest request) {
-        Court court = ownerAccessService.requireCourt(ownerEmail, courtId);
+        Court court = ownerAccessService.requireMutableCourt(ownerEmail, courtId);
+        planEntitlementService.assertCalendarAccess(court.getVenue().getBusiness());
         if (!request.getStartDateTime().isBefore(request.getEndDateTime())) {
             throw new BadRequestException("Maintenance start must be before end");
         }
@@ -238,14 +259,15 @@ public class OwnerCalendarServiceImpl implements OwnerCalendarService {
     public void deleteMaintenance(String ownerEmail, String maintenanceId) {
         MaintenanceWindow window = maintenanceWindowRepository.findById(maintenanceId)
                 .orElseThrow(() -> new ResourceNotFoundException("Maintenance window not found"));
-        ownerAccessService.requireCourt(ownerEmail, window.getCourt().getId());
+        ownerAccessService.requireMutableCourt(ownerEmail, window.getCourt().getId());
         maintenanceWindowRepository.delete(window);
     }
 
     @Override
     @Transactional
     public BlockedSlotResponse addBlockedSlot(String ownerEmail, String courtId, BlockedSlotRequest request) {
-        Court court = ownerAccessService.requireCourt(ownerEmail, courtId);
+        Court court = ownerAccessService.requireMutableCourt(ownerEmail, courtId);
+        planEntitlementService.assertCalendarAccess(court.getVenue().getBusiness());
         if (!request.getStartTime().isBefore(request.getEndTime())) {
             throw new BadRequestException("Blocked slot start must be before end");
         }
@@ -271,7 +293,7 @@ public class OwnerCalendarServiceImpl implements OwnerCalendarService {
     public void deleteBlockedSlot(String ownerEmail, String blockedSlotId) {
         BlockedSlot slot = blockedSlotRepository.findById(blockedSlotId)
                 .orElseThrow(() -> new ResourceNotFoundException("Blocked slot not found"));
-        ownerAccessService.requireCourt(ownerEmail, slot.getCourt().getId());
+        ownerAccessService.requireMutableCourt(ownerEmail, slot.getCourt().getId());
         blockedSlotRepository.delete(slot);
     }
 
@@ -324,25 +346,21 @@ public class OwnerCalendarServiceImpl implements OwnerCalendarService {
 
                 if (isAvailable) {
                     for (Booking b : activeBookings) {
-                        LocalDateTime bookingStart = LocalDateTime.of(b.getBookingDate(), b.getStartTime());
-                        LocalDateTime bookingEnd = endDateTime(b.getBookingDate(), b.getStartTime(), b.getEndTime());
-                        if (overlaps(currentSlotStart, currentSlotEnd, bookingStart, bookingEnd)) {
+                        if (bookingOverlapsSlot(b, currentSlotStart, currentSlotEnd)) {
                             isAvailable = false;
                             unavailableReason = b.getStatus() == BookingStatus.PENDING ? "HELD" : "BOOKED";
-                            break;
+                            if ("BOOKED".equals(unavailableReason)) {
+                                break;
+                            }
                         }
                     }
                 }
 
-                BigDecimal price = court.getHourlyRate();
-                for (CourtPricing cp : pricings) {
-                    LocalDateTime pricingStart = LocalDateTime.of(date, cp.getStartTime());
-                    LocalDateTime pricingEnd = endDateTime(date, cp.getStartTime(), cp.getEndTime());
-                    if (!currentSlotStart.isBefore(pricingStart) && !currentSlotEnd.isAfter(pricingEnd)) {
-                        price = cp.getPrice();
-                        break;
-                    }
-                }
+                BigDecimal price = lk.booknplay.util.CourtPriceResolver.resolve(
+                        court.getHourlyRate(),
+                        pricings,
+                        currentSlotStart.toLocalTime(),
+                        currentSlotEnd.toLocalTime());
 
                 slots.add(AvailabilitySlotResponse.builder()
                         .startTime(currentSlotStart.toLocalTime())
@@ -379,6 +397,22 @@ public class OwnerCalendarServiceImpl implements OwnerCalendarService {
         return endTime.isAfter(startTime) ? end : end.plusDays(1);
     }
 
+    private static boolean bookingOverlapsSlot(Booking booking, LocalDateTime slotStart, LocalDateTime slotEnd) {
+        if (booking.getSlots() != null && !booking.getSlots().isEmpty()) {
+            for (BookingSlot booked : booking.getSlots()) {
+                LocalDateTime bookedStart = LocalDateTime.of(booking.getBookingDate(), booked.getStartTime());
+                LocalDateTime bookedEnd = endDateTime(booking.getBookingDate(), booked.getStartTime(), booked.getEndTime());
+                if (overlaps(slotStart, slotEnd, bookedStart, bookedEnd)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        LocalDateTime bookingStart = LocalDateTime.of(booking.getBookingDate(), booking.getStartTime());
+        LocalDateTime bookingEnd = endDateTime(booking.getBookingDate(), booking.getStartTime(), booking.getEndTime());
+        return overlaps(slotStart, slotEnd, bookingStart, bookingEnd);
+    }
+
     private static boolean overlaps(
             LocalDateTime firstStart, LocalDateTime firstEnd,
             LocalDateTime secondStart, LocalDateTime secondEnd) {
@@ -413,6 +447,7 @@ public class OwnerCalendarServiceImpl implements OwnerCalendarService {
                 .date(booking.getBookingDate())
                 .startTime(booking.getStartTime())
                 .endTime(booking.getEndTime())
+                .slots(BookingTimeFormat.toSlotResponses(booking.getSlots()))
                 .totalAmount(booking.getTotalAmount())
                 .currency("LKR")
                 .status(booking.getStatus())
@@ -420,6 +455,10 @@ public class OwnerCalendarServiceImpl implements OwnerCalendarService {
                 .source(booking.getSource())
                 .guestName(booking.getGuestName())
                 .guestPhone(booking.getGuestPhone())
+                .contactName(booking.getContactName())
+                .contactPhone(booking.getContactPhone())
+                .contactEmail(booking.getContactEmail())
+                .specialRequests(booking.getSpecialRequests())
                 .createdAt(booking.getCreatedAt())
                 .build();
     }

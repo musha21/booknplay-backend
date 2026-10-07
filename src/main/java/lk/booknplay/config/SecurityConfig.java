@@ -62,6 +62,11 @@ public class SecurityConfig {
                     "/api/v1/admin/auth/login",
                     "/api/v1/admin/auth/refresh",
                     "/api/v1/admin/auth/logout",
+                    "/api/v1/auth/otp/request",
+                    "/api/v1/auth/otp/verify",
+                    "/api/v1/auth/phone/register",
+                    "/api/v1/auth/password/forgot",
+                    "/api/v1/auth/password/reset",
                     "/api/v1/public/**",
                     "/api/v1/webhook/**",
                     "/uploads/**",
@@ -72,6 +77,7 @@ public class SecurityConfig {
                 .requestMatchers("/api/v1/admin/**").hasRole("SUPER_ADMIN")
                 .requestMatchers("/api/v1/owner/**").hasAnyRole("BUSINESS_OWNER", "STAFF")
                 .requestMatchers("/api/v1/customer/**").hasRole("CUSTOMER")
+                .requestMatchers("/api/v1/user/phone/**").hasRole("CUSTOMER")
                 .anyRequest().authenticated()
             )
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
