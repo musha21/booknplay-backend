@@ -45,7 +45,9 @@ public class OwnerVenueController {
             @Valid @RequestBody VenueOnboardRequest request) {
         VenueResponse response = ownerVenueService.onboardVenue(authentication.getName(), request);
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(ApiResponse.success("Venue draft created. Complete setup and publish when ready.", response));
+                .body(ApiResponse.success(
+                        "Venue created. Upload photos and publish to go live, or finish from the owner wizard.",
+                        response));
     }
 
     @PostMapping("/venues")
@@ -54,7 +56,9 @@ public class OwnerVenueController {
             @Valid @RequestBody OwnerVenueRequest request) {
         VenueResponse response = ownerVenueService.createVenue(authentication.getName(), request);
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(ApiResponse.success("Venue draft created. Complete setup and publish when ready.", response));
+                .body(ApiResponse.success(
+                        "Venue draft created. Complete setup and publish when ready.",
+                        response));
     }
 
     @GetMapping("/venues/{venueId}")
