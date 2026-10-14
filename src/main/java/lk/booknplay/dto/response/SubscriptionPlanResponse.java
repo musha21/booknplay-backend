@@ -31,6 +31,9 @@ public class SubscriptionPlanResponse {
     private boolean earningsEnabled;
     private boolean reportsEnabled;
     private boolean advancedReportsEnabled;
+    private boolean promotionsEnabled;
     private BigDecimal commissionPercent;
     private Integer maxStaff;
+    /** TRIAL plan only; days granted on new business registration. */
+    private Integer trialDurationDays;
 }

@@ -29,9 +29,11 @@ public class OwnerEarningsController {
             Authentication authentication,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
-            @RequestParam(required = false) String view) {
+            @RequestParam(required = false) String view,
+            @RequestParam(required = false) String sportId,
+            @RequestParam(required = false) String venueId) {
         return ResponseEntity.ok(ApiResponse.success(
-                ownerEarningsService.getSummary(authentication.getName(), from, to, view)));
+                ownerEarningsService.getSummary(authentication.getName(), from, to, view, sportId, venueId)));
     }
 
     @GetMapping("/earnings/daily")
@@ -39,9 +41,11 @@ public class OwnerEarningsController {
             Authentication authentication,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
-            @RequestParam(required = false) String view) {
+            @RequestParam(required = false) String view,
+            @RequestParam(required = false) String sportId,
+            @RequestParam(required = false) String venueId) {
         return ResponseEntity.ok(ApiResponse.success(
-                ownerEarningsService.getDaily(authentication.getName(), from, to, view)));
+                ownerEarningsService.getDaily(authentication.getName(), from, to, view, sportId, venueId)));
     }
 
     @GetMapping("/payouts/summary")

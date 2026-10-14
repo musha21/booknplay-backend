@@ -97,6 +97,13 @@ public class SubscriptionPlan {
     @Column(name = "max_staff")
     private Integer maxStaff;
 
+    /**
+     * Default free-trial length in days (TRIAL plan only).
+     * Used for new registrations; null falls back to SubscriptionAccess.TRIAL_DURATION_DAYS.
+     */
+    @Column(name = "trial_duration_days")
+    private Integer trialDurationDays;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 

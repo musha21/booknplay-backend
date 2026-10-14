@@ -22,4 +22,5 @@ public class EarningsSummaryResponse {
     private BigDecimal net;
     private BigDecimal commissionPercent;
     private List<DailyEarningsResponse> daily;
+    private List<SportEarningsBreakdown> bySport;
 }

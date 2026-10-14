@@ -100,12 +100,13 @@ public class OwnerSubscriptionServiceImpl implements OwnerSubscriptionService {
     @Transactional
     public BusinessSubscription createTrialForBusiness(Business business) {
         LocalDateTime now = LocalDateTime.now();
+        int trialDays = resolveTrialDurationDays();
         BusinessSubscription subscription = BusinessSubscription.builder()
                 .businessId(business.getId())
                 .planCode(PlanCode.TRIAL)
                 .status(SubscriptionStatus.TRIALING)
                 .trialStartsAt(now)
-                .trialEndsAt(now.plusDays(SubscriptionAccess.TRIAL_DURATION_DAYS))
+                .trialEndsAt(now.plusDays(trialDays))
                 .cancelAtPeriodEnd(false)
                 .build();
         BusinessSubscription saved = subscriptionRepository.save(subscription);
@@ -348,9 +349,15 @@ public class OwnerSubscriptionServiceImpl implements OwnerSubscriptionService {
         applyPlanCommission(businessId, planCode);
     }
 
+    private int resolveTrialDurationDays() {
+        return planRepository.findByCode(PlanCode.TRIAL)
+                .map(plan -> SubscriptionAccess.resolveTrialDurationDays(plan.getTrialDurationDays()))
+                .orElse(SubscriptionAccess.TRIAL_DURATION_DAYS);
+    }
+
     private BusinessSubscription backfillTrial(Business business) {
         LocalDateTime start = business.getCreatedAt() != null ? business.getCreatedAt() : LocalDateTime.now();
-        LocalDateTime end = start.plusDays(SubscriptionAccess.TRIAL_DURATION_DAYS);
+        LocalDateTime end = start.plusDays(resolveTrialDurationDays());
         LocalDateTime now = LocalDateTime.now();
         boolean stillTrial = !end.isBefore(now);
         BusinessSubscription subscription = BusinessSubscription.builder()
@@ -414,6 +421,7 @@ public class OwnerSubscriptionServiceImpl implements OwnerSubscriptionService {
                     .earningsEnabled(true)
                     .reportsEnabled(true)
                     .advancedReportsEnabled(true)
+                    .promotionsEnabled(false)
                     .build();
         }
         return SubscriptionResponse.PlanLimits.builder()
@@ -425,6 +433,7 @@ public class OwnerSubscriptionServiceImpl implements OwnerSubscriptionService {
                 .earningsEnabled(plan.isEarningsEnabled())
                 .reportsEnabled(plan.isReportsEnabled())
                 .advancedReportsEnabled(plan.isAdvancedReportsEnabled())
+                .promotionsEnabled(plan.isPromotionsEnabled())
                 .build();
     }
 
@@ -453,8 +462,10 @@ public class OwnerSubscriptionServiceImpl implements OwnerSubscriptionService {
                 .earningsEnabled(plan.isEarningsEnabled())
                 .reportsEnabled(plan.isReportsEnabled())
                 .advancedReportsEnabled(plan.isAdvancedReportsEnabled())
+                .promotionsEnabled(plan.isPromotionsEnabled())
                 .commissionPercent(plan.getCommissionPercent())
                 .maxStaff(plan.getMaxStaff())
+                .trialDurationDays(plan.getTrialDurationDays())
                 .build();
     }
 
