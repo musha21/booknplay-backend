@@ -77,6 +77,15 @@ public class OwnerAuthServiceImpl implements OwnerAuthService {
                 .isLocked(false)
                 .build());
 
+        lk.booknplay.enums.PayoutFrequency frequency = request.getPayoutFrequency() != null
+                ? request.getPayoutFrequency()
+                : lk.booknplay.enums.PayoutFrequency.WEEKLY;
+        String bankName = trimToNull(request.getBankName());
+        String bankAccountName = trimToNull(request.getBankAccountName());
+        String bankAccountNumber = trimToNull(request.getBankAccountNumber());
+        String bankBranch = trimToNull(request.getBankBranch());
+        boolean hasBank = bankName != null && bankAccountName != null && bankAccountNumber != null;
+
         Business business = businessRepository.save(Business.builder()
                 .name(request.getBusinessName())
                 .ownerId(user.getId())
@@ -85,6 +94,14 @@ public class OwnerAuthServiceImpl implements OwnerAuthService {
                 .contactEmail(request.getContactEmail() != null ? request.getContactEmail() : request.getEmail())
                 .contactPhone(request.getContactPhone())
                 .commissionPercent(BigDecimal.ZERO)
+                .bankName(bankName)
+                .bankAccountName(bankAccountName)
+                .bankAccountNumber(bankAccountNumber)
+                .bankBranch(bankBranch)
+                .payoutFrequency(frequency)
+                .bankVerificationStatus(hasBank
+                        ? lk.booknplay.enums.BankVerificationStatus.PENDING_REVIEW
+                        : lk.booknplay.enums.BankVerificationStatus.UNVERIFIED)
                 .build());
 
         ownerSubscriptionService.createTrialForBusiness(business);
@@ -299,6 +316,13 @@ public class OwnerAuthServiceImpl implements OwnerAuthService {
 
     private static String normalizeEmail(String email) {
         return email == null ? "" : email.trim().toLowerCase();
+    }
+
+    private static String trimToNull(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return value.trim();
     }
 
     private OwnerResponse toOwnerResponse(User user, Business business) {

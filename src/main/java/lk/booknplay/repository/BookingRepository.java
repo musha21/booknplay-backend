@@ -1,10 +1,13 @@
 package lk.booknplay.repository;
 
+import jakarta.persistence.LockModeType;
 import lk.booknplay.entity.Booking;
 import lk.booknplay.enums.BookingStatus;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -12,6 +15,7 @@ import org.springframework.stereotype.Repository;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface BookingRepository extends JpaRepository<Booking, String> {
@@ -79,6 +83,30 @@ public interface BookingRepository extends JpaRepository<Booking, String> {
     );
 
     List<Booking> findByStatusAndCreatedAtBefore(BookingStatus status, java.time.LocalDateTime createdAt);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE Booking b SET b.status = lk.booknplay.enums.BookingStatus.FAILED "
+            + "WHERE b.id = :id AND b.status = lk.booknplay.enums.BookingStatus.PENDING")
+    int markFailedIfPending(@Param("id") String id);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT b FROM Booking b WHERE b.id = :id")
+    Optional<Booking> findByIdForUpdate(@Param("id") String id);
+
+    @Query("SELECT DISTINCT b FROM Booking b LEFT JOIN b.slots s "
+            + "WHERE b.court.id = :courtId "
+            + "AND b.bookingDate = :bookingDate "
+            + "AND b.id <> :excludeBookingId "
+            + "AND b.status IN (lk.booknplay.enums.BookingStatus.PENDING, lk.booknplay.enums.BookingStatus.CONFIRMED) "
+            + "AND ((s.id IS NOT NULL AND s.startTime < :endTime AND s.endTime > :startTime) "
+            + "OR (s.id IS NULL AND b.startTime < :endTime AND b.endTime > :startTime))")
+    List<Booking> findOverlappingActiveExcluding(
+            @Param("courtId") String courtId,
+            @Param("bookingDate") LocalDate bookingDate,
+            @Param("startTime") LocalTime startTime,
+            @Param("endTime") LocalTime endTime,
+            @Param("excludeBookingId") String excludeBookingId
+    );
 
     @Query("SELECT DISTINCT b FROM Booking b LEFT JOIN FETCH b.slots " +
            "WHERE b.court.id IN :courtIds AND b.bookingDate BETWEEN :fromDate AND :toDate AND b.status <> :status")

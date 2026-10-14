@@ -13,6 +13,7 @@ import lk.booknplay.entity.BookingSlot;
 import lk.booknplay.entity.Customer;
 import lk.booknplay.entity.Invoice;
 import lk.booknplay.entity.Payment;
+import lk.booknplay.entity.Refund;
 import lk.booknplay.enums.BookingSource;
 import lk.booknplay.enums.BookingStatus;
 import lk.booknplay.enums.PaymentStatus;
@@ -21,9 +22,11 @@ import lk.booknplay.exception.ForbiddenException;
 import lk.booknplay.exception.ResourceNotFoundException;
 import lk.booknplay.exception.UnauthorizedException;
 import lk.booknplay.repository.BookingRepository;
+import lk.booknplay.repository.CourtRepository;
 import lk.booknplay.repository.CustomerRepository;
 import lk.booknplay.repository.InvoiceRepository;
 import lk.booknplay.repository.PaymentRepository;
+import lk.booknplay.repository.RefundRepository;
 import lk.booknplay.service.NotificationService;
 import lk.booknplay.service.OwnerSubscriptionService;
 import lk.booknplay.service.PayHereCheckoutStore;
@@ -37,12 +40,18 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.util.UriComponentsBuilder;
 
 import java.io.ByteArrayOutputStream;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Service
 public class PaymentServiceImpl implements PaymentService {
@@ -51,8 +60,10 @@ public class PaymentServiceImpl implements PaymentService {
 
     private final PaymentRepository paymentRepository;
     private final BookingRepository bookingRepository;
+    private final CourtRepository courtRepository;
     private final CustomerRepository customerRepository;
     private final InvoiceRepository invoiceRepository;
+    private final RefundRepository refundRepository;
     private final NotificationService notificationService;
     private final PayHereCheckoutStore checkoutStore;
     private final PayHereRefundClient payHereRefundClient;
@@ -69,8 +80,10 @@ public class PaymentServiceImpl implements PaymentService {
     public PaymentServiceImpl(
             PaymentRepository paymentRepository,
             BookingRepository bookingRepository,
+            CourtRepository courtRepository,
             CustomerRepository customerRepository,
             InvoiceRepository invoiceRepository,
+            RefundRepository refundRepository,
             NotificationService notificationService,
             PayHereCheckoutStore checkoutStore,
             PayHereRefundClient payHereRefundClient,
@@ -80,13 +93,15 @@ public class PaymentServiceImpl implements PaymentService {
             @Value("${payhere.merchant-id:}") String merchantId,
             @Value("${payhere.merchant-secret:}") String merchantSecret,
             @Value("${payhere.checkout-url:https://sandbox.payhere.lk/pay/checkout}") String checkoutUrl,
-            @Value("${payhere.return-url:http://localhost:5173/payment/return}") String returnUrlBase,
-            @Value("${payhere.cancel-url:http://localhost:5173/payment/return}") String cancelUrlBase,
+            @Value("${payhere.return-url:http://localhost:8080/api/v1/public/payhere/return}") String returnUrlBase,
+            @Value("${payhere.cancel-url:http://localhost:8080/api/v1/public/payhere/cancel}") String cancelUrlBase,
             @Value("${payhere.notify-url:http://localhost:8080/api/v1/webhook/payhere/notify}") String notifyUrl) {
         this.paymentRepository = paymentRepository;
         this.bookingRepository = bookingRepository;
+        this.courtRepository = courtRepository;
         this.customerRepository = customerRepository;
         this.invoiceRepository = invoiceRepository;
+        this.refundRepository = refundRepository;
         this.notificationService = notificationService;
         this.checkoutStore = checkoutStore;
         this.payHereRefundClient = payHereRefundClient;
@@ -229,33 +244,44 @@ public class PaymentServiceImpl implements PaymentService {
             throw new BadRequestException("Invalid PayHere notify signature");
         }
 
+        if (!merchantId.isBlank() && merchantFromPayload != null
+                && !merchantId.equalsIgnoreCase(merchantFromPayload.trim())) {
+            throw new BadRequestException("PayHere merchant_id mismatch");
+        }
+
         Booking booking = bookingRepository.findByBookingRef(orderId)
                 .orElseThrow(() -> new ResourceNotFoundException("Booking not found for order " + orderId));
-        Payment payment = paymentRepository.findByBookingId(booking.getId())
+        Payment payment = paymentRepository.findByBookingIdForUpdate(booking.getId())
                 .orElseThrow(() -> new ResourceNotFoundException("Payment record not found"));
 
-        if (payment.getStatus() == PaymentStatus.SUCCESS || payment.getStatus() == PaymentStatus.PAID) {
+        if (payment.getStatus() == PaymentStatus.SUCCESS
+                || payment.getStatus() == PaymentStatus.PAID
+                || payment.getStatus() == PaymentStatus.REFUNDED) {
             return mapToResponse(payment, null);
         }
 
+        String expectedAmount = PayHereHash.formatAmount(payment.getAmount());
+        if (!expectedAmount.equals(payhereAmount.trim())) {
+            throw new BadRequestException("PayHere amount mismatch");
+        }
+        String storedCurrency = payment.getCurrency() == null ? "LKR" : payment.getCurrency().trim();
+        if (!storedCurrency.equalsIgnoreCase(payhereCurrency.trim())) {
+            throw new BadRequestException("PayHere currency mismatch");
+        }
+
         if ("2".equals(statusCode.trim())) {
-            if (paymentId == null || paymentId.isBlank() || !paymentId.trim().matches("\\d+")) {
-                log.error(
+            String gatewayReference = null;
+            if (paymentId != null && paymentId.trim().matches("\\d+")) {
+                gatewayReference = paymentId.trim();
+            } else {
+                log.warn(
                         "PayHere notify success for order {} but payment_id is missing or invalid (value={}). "
-                                + "Refunds will not work until notify includes a numeric payment_id.",
+                                + "Confirming booking anyway; refunds may need a numeric payment_id later.",
                         orderId,
                         paymentId
                 );
-                throw new BadRequestException(
-                        "PayHere notify succeeded but payment_id was missing. Refunds require a numeric payment_id."
-                );
             }
-            String numericPaymentId = paymentId.trim();
-            if (hasCompetingHold(booking)) {
-                failAndRefundConflict(booking, payment, numericPaymentId);
-                return mapToResponse(payment, null);
-            }
-            confirmPaid(booking, payment, "PAYHERE", numericPaymentId);
+            resolveSlotConflictThenConfirm(booking, payment, gatewayReference);
         } else {
             payment.setPaymentGateway("PAYHERE");
             if (paymentId != null && paymentId.trim().matches("\\d+")) {
@@ -318,25 +344,74 @@ public class PaymentServiceImpl implements PaymentService {
         return appBaseUrl + "/api/v1/public/payhere/checkout/" + token;
     }
 
-    private boolean hasCompetingHold(Booking booking) {
+    private void resolveSlotConflictThenConfirm(Booking booking, Payment payment, String gatewayReference) {
         String courtId = booking.getCourt().getId();
+        courtRepository.findByIdWithLock(courtId)
+                .orElseThrow(() -> new ResourceNotFoundException("Court not found: " + courtId));
+
+        List<Booking> unpaidCompetitors = new ArrayList<>();
+        List<Booking> paidCompetitors = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        seen.add(booking.getId());
+
+        List<LocalTime[]> windows = new ArrayList<>();
         if (booking.getSlots() != null && !booking.getSlots().isEmpty()) {
             for (BookingSlot slot : booking.getSlots()) {
-                if (bookingRepository.existsOverlappingBookingExcluding(
-                        courtId,
-                        booking.getBookingDate(),
-                        slot.getStartTime(),
-                        slot.getEndTime(),
-                        booking.getId())) {
-                    return true;
+                windows.add(new LocalTime[]{slot.getStartTime(), slot.getEndTime()});
+            }
+        } else {
+            windows.add(new LocalTime[]{booking.getStartTime(), booking.getEndTime()});
+        }
+
+        for (LocalTime[] window : windows) {
+            List<Booking> overlaps = bookingRepository.findOverlappingActiveExcluding(
+                    courtId,
+                    booking.getBookingDate(),
+                    window[0],
+                    window[1],
+                    booking.getId()
+            );
+            for (Booking competitor : overlaps) {
+                if (!seen.add(competitor.getId())) {
+                    continue;
+                }
+                if (competitor.getStatus() == BookingStatus.CONFIRMED) {
+                    paidCompetitors.add(competitor);
+                    continue;
+                }
+                Payment competitorPayment = paymentRepository.findByBookingId(competitor.getId()).orElse(null);
+                if (competitorPayment != null && isPaidStatus(competitorPayment.getStatus())) {
+                    paidCompetitors.add(competitor);
+                } else {
+                    unpaidCompetitors.add(competitor);
                 }
             }
-            return false;
         }
-        LocalTime start = booking.getStartTime();
-        LocalTime end = booking.getEndTime();
-        return bookingRepository.existsOverlappingBookingExcluding(
-                courtId, booking.getBookingDate(), start, end, booking.getId());
+
+        if (!paidCompetitors.isEmpty()) {
+            failAndRefundConflict(booking, payment, gatewayReference);
+            return;
+        }
+
+        for (Booking competitor : unpaidCompetitors) {
+            competitor.setStatus(BookingStatus.FAILED);
+            bookingRepository.save(competitor);
+            paymentRepository.findByBookingId(competitor.getId()).ifPresent(competitorPayment -> {
+                if (competitorPayment.getStatus() == PaymentStatus.INITIATED
+                        || competitorPayment.getStatus() == PaymentStatus.PROCESSING) {
+                    competitorPayment.setStatus(PaymentStatus.FAILED);
+                    paymentRepository.save(competitorPayment);
+                }
+            });
+        }
+
+        confirmPaid(booking, payment, "PAYHERE", gatewayReference);
+    }
+
+    private static boolean isPaidStatus(PaymentStatus status) {
+        return status == PaymentStatus.SUCCESS
+                || status == PaymentStatus.PAID
+                || status == PaymentStatus.REFUNDED;
     }
 
     private void failAndRefundConflict(Booking booking, Payment payment, String paymentId) {
@@ -347,17 +422,67 @@ public class PaymentServiceImpl implements PaymentService {
         );
         payment.setPaymentGateway("PAYHERE");
         payment.setGatewayReference(paymentId);
+        payment.setStatus(PaymentStatus.FAILED);
         booking.setStatus(BookingStatus.FAILED);
         bookingRepository.save(booking);
+        paymentRepository.save(payment);
+
+        String reason = "Booking " + booking.getBookingRef() + " slot conflict — automatic refund";
+        Refund existing = refundRepository.findByBookingId(booking.getId()).orElse(null);
+        if (existing != null) {
+            String status = existing.getStatus() == null ? "" : existing.getStatus().trim().toUpperCase();
+            if ("SUCCEEDED".equals(status) || "PROCESSING".equals(status)) {
+                if ("SUCCEEDED".equals(status)) {
+                    payment.setStatus(PaymentStatus.REFUNDED);
+                    paymentRepository.save(payment);
+                }
+                return;
+            }
+        }
+
+        String pendingRef = "CONFLICT-" + booking.getBookingRef() + "-" + System.currentTimeMillis();
+        Refund refund = existing != null ? existing : Refund.builder()
+                .booking(booking)
+                .payment(payment)
+                .amount(payment.getAmount())
+                .mode("PAYHERE")
+                .status("PROCESSING")
+                .reference(pendingRef)
+                .processedAt(LocalDateTime.now())
+                .build();
+        refund.setStatus("PROCESSING");
+        refund.setProcessedAt(LocalDateTime.now());
+        if (existing != null && (refund.getReference() == null || refund.getReference().isBlank())) {
+            refund.setReference(pendingRef);
+        }
+        refundRepository.save(refund);
+
+        if (paymentId == null || paymentId.isBlank() || !paymentId.trim().matches("\\d+")) {
+            log.warn(
+                    "Skipping automatic conflict refund for booking {} — no numeric PayHere payment_id",
+                    booking.getBookingRef()
+            );
+            refund.setStatus("REQUIRES_RECONCILIATION");
+            refund.setProcessedAt(LocalDateTime.now());
+            refundRepository.save(refund);
+            return;
+        }
 
         try {
-            payHereRefundClient.refund(
-                    paymentId,
+            String gatewayRefundRef = payHereRefundClient.refund(
+                    paymentId.trim(),
                     payment.getAmount(),
                     payment.getAmount(),
-                    "Booking " + booking.getBookingRef() + " slot conflict — automatic refund"
+                    reason
             );
+            refund.setStatus("SUCCEEDED");
+            if (gatewayRefundRef != null && !gatewayRefundRef.isBlank()) {
+                refund.setReference(gatewayRefundRef);
+            }
+            refund.setProcessedAt(LocalDateTime.now());
+            refundRepository.save(refund);
             payment.setStatus(PaymentStatus.REFUNDED);
+            paymentRepository.save(payment);
         } catch (RuntimeException ex) {
             log.error(
                     "Automatic conflict refund failed for booking {} payment_id={}: {}",
@@ -365,9 +490,10 @@ public class PaymentServiceImpl implements PaymentService {
                     paymentId,
                     ex.getMessage()
             );
-            payment.setStatus(PaymentStatus.FAILED);
+            refund.setStatus("REQUIRES_RECONCILIATION");
+            refund.setProcessedAt(LocalDateTime.now());
+            refundRepository.save(refund);
         }
-        paymentRepository.save(payment);
     }
 
     private void confirmPaid(Booking booking, Payment payment, String gateway, String gatewayReference) {
@@ -394,7 +520,27 @@ public class PaymentServiceImpl implements PaymentService {
             invoiceRepository.save(invoice);
         }
 
-        notificationService.sendBookingNotification(booking.getCustomer(), booking, "BOOKING_CONFIRMED");
+        final String bookingId = booking.getId();
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    try {
+                        bookingRepository.findByIdWithSlots(bookingId).ifPresent(confirmed -> {
+                            if (confirmed.getCustomer() != null) {
+                                notificationService.sendBookingNotification(
+                                        confirmed.getCustomer(), confirmed, "BOOKING_CONFIRMED");
+                            }
+                        });
+                    } catch (Exception e) {
+                        log.warn("Failed to send booking confirmation notification for {}: {}",
+                                bookingId, e.getMessage());
+                    }
+                }
+            });
+        } else {
+            notificationService.sendBookingNotification(booking.getCustomer(), booking, "BOOKING_CONFIRMED");
+        }
     }
 
     @Override

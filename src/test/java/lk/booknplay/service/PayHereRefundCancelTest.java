@@ -103,7 +103,8 @@ class PayHereRefundCancelTest {
     @Test
     void cancelIssuesFullPayHereRefundBeforeDeadline() {
         when(customerRepository.findByUser_Email("maya@example.com")).thenReturn(Optional.of(customer));
-        when(bookingRepository.findById("booking-1")).thenReturn(Optional.of(booking));
+        when(bookingRepository.findByIdWithSlots("booking-1")).thenReturn(Optional.of(booking));
+        when(bookingRepository.findByIdForUpdate("booking-1")).thenReturn(Optional.of(booking));
         when(paymentRepository.findByBookingId("booking-1")).thenReturn(Optional.of(payment));
         when(refundRepository.findByBookingId("booking-1")).thenReturn(Optional.empty());
         when(payHereRefundClient.refund(
@@ -114,6 +115,11 @@ class PayHereRefundCancelTest {
         )).thenReturn("560034010257");
         when(bookingRepository.save(any(Booking.class))).thenAnswer(inv -> inv.getArgument(0));
         when(paymentRepository.save(any(Payment.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(refundRepository.saveAndFlush(any(Refund.class))).thenAnswer(inv -> {
+            Refund saved = inv.getArgument(0);
+            when(refundRepository.findByBookingId("booking-1")).thenReturn(Optional.of(saved));
+            return saved;
+        });
         when(refundRepository.save(any(Refund.class))).thenAnswer(inv -> {
             Refund saved = inv.getArgument(0);
             when(refundRepository.findByBookingId("booking-1")).thenReturn(Optional.of(saved));
@@ -129,6 +135,7 @@ class PayHereRefundCancelTest {
         assertEquals(0, new BigDecimal("3000.00").compareTo(response.getRefundAmount()));
 
         ArgumentCaptor<Refund> refundCaptor = ArgumentCaptor.forClass(Refund.class);
+        verify(refundRepository).saveAndFlush(any(Refund.class));
         verify(refundRepository).save(refundCaptor.capture());
         assertEquals("PAYHERE", refundCaptor.getValue().getMode());
         assertEquals("SUCCEEDED", refundCaptor.getValue().getStatus());
@@ -138,7 +145,8 @@ class PayHereRefundCancelTest {
     void cancelIssuesPartialPayHereRefundAfterDeadline() {
         booking.setCancellationDeadline(LocalDateTime.now().minusHours(1));
         when(customerRepository.findByUser_Email("maya@example.com")).thenReturn(Optional.of(customer));
-        when(bookingRepository.findById("booking-1")).thenReturn(Optional.of(booking));
+        when(bookingRepository.findByIdWithSlots("booking-1")).thenReturn(Optional.of(booking));
+        when(bookingRepository.findByIdForUpdate("booking-1")).thenReturn(Optional.of(booking));
         when(paymentRepository.findByBookingId("booking-1")).thenReturn(Optional.of(payment));
         when(refundRepository.findByBookingId("booking-1")).thenReturn(Optional.empty());
         when(payHereRefundClient.refund(
@@ -149,6 +157,11 @@ class PayHereRefundCancelTest {
         )).thenReturn("560034010999");
         when(bookingRepository.save(any(Booking.class))).thenAnswer(inv -> inv.getArgument(0));
         when(paymentRepository.save(any(Payment.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(refundRepository.saveAndFlush(any(Refund.class))).thenAnswer(inv -> {
+            Refund saved = inv.getArgument(0);
+            when(refundRepository.findByBookingId("booking-1")).thenReturn(Optional.of(saved));
+            return saved;
+        });
         when(refundRepository.save(any(Refund.class))).thenAnswer(inv -> {
             Refund saved = inv.getArgument(0);
             when(refundRepository.findByBookingId("booking-1")).thenReturn(Optional.of(saved));
@@ -165,8 +178,12 @@ class PayHereRefundCancelTest {
     @Test
     void cancelFailsAndLeavesBookingConfirmedWhenPayHereRefundFails() {
         when(customerRepository.findByUser_Email("maya@example.com")).thenReturn(Optional.of(customer));
-        when(bookingRepository.findById("booking-1")).thenReturn(Optional.of(booking));
+        when(bookingRepository.findByIdWithSlots("booking-1")).thenReturn(Optional.of(booking));
+        when(bookingRepository.findByIdForUpdate("booking-1")).thenReturn(Optional.of(booking));
         when(paymentRepository.findByBookingId("booking-1")).thenReturn(Optional.of(payment));
+        when(refundRepository.findByBookingId("booking-1")).thenReturn(Optional.empty());
+        when(refundRepository.saveAndFlush(any(Refund.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(refundRepository.save(any(Refund.class))).thenAnswer(inv -> inv.getArgument(0));
         when(payHereRefundClient.refund(any(), any(), any(), any()))
                 .thenThrow(new BadRequestException("PayHere refund failed. The booking was not cancelled."));
 
@@ -176,7 +193,10 @@ class PayHereRefundCancelTest {
         assertTrue(error.getMessage().contains("not cancelled"));
         assertEquals(BookingStatus.CONFIRMED, booking.getStatus());
         verify(bookingRepository, never()).save(any());
-        verify(refundRepository, never()).save(any());
+        verify(refundRepository).saveAndFlush(any(Refund.class));
+        ArgumentCaptor<Refund> refundCaptor = ArgumentCaptor.forClass(Refund.class);
+        verify(refundRepository).save(refundCaptor.capture());
+        assertEquals("FAILED", refundCaptor.getValue().getStatus());
         verify(paymentRepository, never()).save(any());
     }
 
@@ -184,7 +204,8 @@ class PayHereRefundCancelTest {
     void cancelFailsWhenGatewayReferenceMissing() {
         payment.setGatewayReference(null);
         when(customerRepository.findByUser_Email("maya@example.com")).thenReturn(Optional.of(customer));
-        when(bookingRepository.findById("booking-1")).thenReturn(Optional.of(booking));
+        when(bookingRepository.findByIdWithSlots("booking-1")).thenReturn(Optional.of(booking));
+        when(bookingRepository.findByIdForUpdate("booking-1")).thenReturn(Optional.of(booking));
         when(paymentRepository.findByBookingId("booking-1")).thenReturn(Optional.of(payment));
 
         BadRequestException error = assertThrows(BadRequestException.class,
@@ -196,9 +217,35 @@ class PayHereRefundCancelTest {
     }
 
     @Test
+    void cancelDoesNotCallPayHereAgainWhenRefundAlreadyProcessing() {
+        Refund processing = Refund.builder()
+                .id("ref-1")
+                .booking(booking)
+                .payment(payment)
+                .amount(new BigDecimal("3000.00"))
+                .mode("PAYHERE")
+                .status("PROCESSING")
+                .reference("CANCEL-pending")
+                .processedAt(LocalDateTime.now())
+                .build();
+        when(customerRepository.findByUser_Email("maya@example.com")).thenReturn(Optional.of(customer));
+        when(bookingRepository.findByIdWithSlots("booking-1")).thenReturn(Optional.of(booking));
+        when(bookingRepository.findByIdForUpdate("booking-1")).thenReturn(Optional.of(booking));
+        when(paymentRepository.findByBookingId("booking-1")).thenReturn(Optional.of(payment));
+        when(refundRepository.findByBookingId("booking-1")).thenReturn(Optional.of(processing));
+
+        BadRequestException error = assertThrows(BadRequestException.class,
+                () -> bookingService.cancelBooking("maya@example.com", "booking-1"));
+
+        assertTrue(error.getMessage().toLowerCase().contains("already"));
+        verify(payHereRefundClient, never()).refund(any(), any(), any(), any());
+        assertEquals(BookingStatus.CONFIRMED, booking.getStatus());
+    }
+
+    @Test
     void previewDescribesPayHereRefund() {
         when(customerRepository.findByUser_Email("maya@example.com")).thenReturn(Optional.of(customer));
-        when(bookingRepository.findById("booking-1")).thenReturn(Optional.of(booking));
+        when(bookingRepository.findByIdWithSlots("booking-1")).thenReturn(Optional.of(booking));
         when(paymentRepository.findByBookingId("booking-1")).thenReturn(Optional.of(payment));
 
         CancellationPreviewResponse preview = bookingService.previewCancellation("maya@example.com", "booking-1");
@@ -221,6 +268,7 @@ class PayHereRefundCancelTest {
         booking.setLateRefundPercentage(null);
 
         when(bookingRepository.findById("booking-1")).thenReturn(Optional.of(booking));
+        when(bookingRepository.findByIdForUpdate("booking-1")).thenReturn(Optional.of(booking));
         when(paymentRepository.findByBookingId("booking-1")).thenReturn(Optional.empty());
         when(refundRepository.findByBookingId("booking-1")).thenReturn(Optional.empty());
         when(bookingRepository.save(any(Booking.class))).thenAnswer(inv -> inv.getArgument(0));

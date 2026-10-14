@@ -34,6 +34,9 @@ public class VenueResponse {
     private BigDecimal startingPrice;
     private String currency;
     private Double rating;
+    private long reviewCount;
+    private Integer availableCourtCount;
+    private List<OperatingHoursResponse> operatingHours;
     private List<String> amenities;
     private List<String> rules;
     private String additionalRules;

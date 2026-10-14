@@ -2,16 +2,17 @@ package lk.booknplay.service.impl;
 
 import lk.booknplay.dto.response.DailyEarningsResponse;
 import lk.booknplay.dto.response.EarningsSummaryResponse;
+import lk.booknplay.dto.response.OwnerPayoutSummaryResponse;
 import lk.booknplay.dto.response.PayoutResponse;
 import lk.booknplay.entity.Booking;
 import lk.booknplay.entity.Business;
-import lk.booknplay.entity.Payout;
+import lk.booknplay.enums.BookingSource;
 import lk.booknplay.enums.BookingStatus;
 import lk.booknplay.enums.StaffPermission;
 import lk.booknplay.repository.BookingRepository;
-import lk.booknplay.repository.PayoutRepository;
 import lk.booknplay.service.OwnerAccessService;
 import lk.booknplay.service.OwnerEarningsService;
+import lk.booknplay.service.PayoutSettlementService;
 import lk.booknplay.service.PlanEntitlementService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -37,7 +38,7 @@ public class OwnerEarningsServiceImpl implements OwnerEarningsService {
     private final OwnerAccessService ownerAccessService;
     private final PlanEntitlementService planEntitlementService;
     private final BookingRepository bookingRepository;
-    private final PayoutRepository payoutRepository;
+    private final PayoutSettlementService payoutSettlementService;
 
     @Override
     @Transactional(readOnly = true)
@@ -47,7 +48,9 @@ public class OwnerEarningsServiceImpl implements OwnerEarningsService {
         Business business = ownerAccessService.requireBusiness(ownerEmail);
         assertEarningsView(business, view, range);
         List<Booking> bookings = bookingRepository.findForEarnings(
-                business.getId(), range.from(), range.to(), EARNING_STATUSES);
+                business.getId(), range.from(), range.to(), EARNING_STATUSES).stream()
+                .filter(b -> b.getSource() != BookingSource.WALK_IN)
+                .toList();
         BigDecimal percent = business.getCommissionPercent() != null
                 ? business.getCommissionPercent()
                 : new BigDecimal("10.00");
@@ -77,12 +80,19 @@ public class OwnerEarningsServiceImpl implements OwnerEarningsService {
     @Override
     @Transactional(readOnly = true)
     public List<PayoutResponse> listPayouts(String ownerEmail) {
-        ownerAccessService.requireStaffPermission(ownerEmail, StaffPermission.EARNINGS);
-        Business business = ownerAccessService.requireBusiness(ownerEmail);
-        planEntitlementService.assertEarnings(business);
-        return payoutRepository.findByBusinessIdOrderByPeriodStartDesc(business.getId()).stream()
-                .map(this::mapPayout)
-                .toList();
+        return payoutSettlementService.listOwnerPayouts(ownerEmail);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public PayoutResponse getPayout(String ownerEmail, String payoutId) {
+        return payoutSettlementService.getOwnerPayout(ownerEmail, payoutId);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public OwnerPayoutSummaryResponse payoutSummary(String ownerEmail) {
+        return payoutSettlementService.ownerSummary(ownerEmail);
     }
 
     private void assertEarningsView(Business business, String view, Range range) {
@@ -117,20 +127,6 @@ public class OwnerEarningsServiceImpl implements OwnerEarningsService {
         }
         daily.sort(Comparator.comparing(DailyEarningsResponse::getDate));
         return daily;
-    }
-
-    private PayoutResponse mapPayout(Payout payout) {
-        return PayoutResponse.builder()
-                .id(payout.getId())
-                .periodStart(payout.getPeriodStart())
-                .periodEnd(payout.getPeriodEnd())
-                .gross(payout.getGross())
-                .commission(payout.getCommission())
-                .net(payout.getNet())
-                .status(payout.getStatus())
-                .note(payout.getNote())
-                .createdAt(payout.getCreatedAt())
-                .build();
     }
 
     private Range resolveRange(LocalDate from, LocalDate to) {

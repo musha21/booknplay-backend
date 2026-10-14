@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lk.booknplay.dto.request.BookingConfirmRequest;
 import lk.booknplay.dto.request.BookingCreateRequest;
+import lk.booknplay.dto.request.BookingReviewRequest;
 import lk.booknplay.dto.request.SlotSelectionRequest;
 import lk.booknplay.dto.response.*;
 import lk.booknplay.entity.*;
@@ -50,6 +51,7 @@ public class BookingServiceImpl implements BookingService {
     private final BookingQuoteRepository quoteRepository;
     private final RefundRepository refundRepository;
     private final CancellationPolicyRepository cancellationPolicyRepository;
+    private final ReviewRepository reviewRepository;
     private final BookingRulesService bookingRulesService;
     private final NotificationService notificationService;
     private final PayHereRefundClient payHereRefundClient;
@@ -69,6 +71,7 @@ public class BookingServiceImpl implements BookingService {
             BookingQuoteRepository quoteRepository,
             RefundRepository refundRepository,
             CancellationPolicyRepository cancellationPolicyRepository,
+            ReviewRepository reviewRepository,
             BookingRulesService bookingRulesService,
             NotificationService notificationService,
             PayHereRefundClient payHereRefundClient,
@@ -83,6 +86,7 @@ public class BookingServiceImpl implements BookingService {
         this.quoteRepository = quoteRepository;
         this.refundRepository = refundRepository;
         this.cancellationPolicyRepository = cancellationPolicyRepository;
+        this.reviewRepository = reviewRepository;
         this.bookingRulesService = bookingRulesService;
         this.notificationService = notificationService;
         this.payHereRefundClient = payHereRefundClient;
@@ -94,6 +98,18 @@ public class BookingServiceImpl implements BookingService {
     @Transactional(readOnly = true)
     public BookingResponse getBookingById(String customerEmail, String bookingId) {
         return mapToResponse(requireCustomerBooking(customerEmail, bookingId), getPaymentStatus(bookingId));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public BookingResponse getBookingByRef(String customerEmail, String bookingRef) {
+        Customer customer = requireCustomer(customerEmail);
+        Booking booking = bookingRepository.findByBookingRef(bookingRef)
+                .orElseThrow(() -> new ResourceNotFoundException("Booking not found with ref: " + bookingRef));
+        if (booking.getCustomer() == null || !booking.getCustomer().getId().equals(customer.getId())) {
+            throw new ForbiddenException("Access denied to this booking");
+        }
+        return mapToResponse(booking, getPaymentStatus(booking.getId()));
     }
 
     @Override
@@ -117,7 +133,9 @@ public class BookingServiceImpl implements BookingService {
     @Transactional(readOnly = true)
     public Page<BookingResponse> getBookingHistory(String customerEmail, Pageable pageable) {
         Customer customer = requireCustomer(customerEmail);
-        List<BookingStatus> statuses = List.of(BookingStatus.COMPLETED, BookingStatus.CANCELLED, BookingStatus.NO_SHOW);
+        // Include CONFIRMED past-date bookings so customers can leave a review after play time.
+        List<BookingStatus> statuses = List.of(
+                BookingStatus.COMPLETED, BookingStatus.CONFIRMED, BookingStatus.CANCELLED, BookingStatus.NO_SHOW);
         return bookingRepository.findByCustomerIdAndBookingDateLessThanAndStatusInOrderByBookingDateDescStartTimeDesc(
                 customer.getId(), LocalDate.now(), statuses, pageable)
                 .map(b -> mapToResponse(b, getPaymentStatus(b.getId())));
@@ -362,12 +380,13 @@ public class BookingServiceImpl implements BookingService {
     }
 
     private BookingCancellationResponse cancelConfirmedBooking(Booking booking, String actor, String reason) {
-        if (booking.getStatus() == BookingStatus.CANCELLED) return cancellationResponse(booking);
-        CancellationPreviewResponse preview = buildCancellationPreview(booking);
+        Booking locked = bookingRepository.findByIdForUpdate(booking.getId()).orElse(booking);
+        if (locked.getStatus() == BookingStatus.CANCELLED) return cancellationResponse(locked);
+        CancellationPreviewResponse preview = buildCancellationPreview(locked);
         if (!preview.isEligible()) throw new BadRequestException(preview.getMessage());
 
-        Payment payment = paymentRepository.findByBookingId(booking.getId()).orElse(null);
-        boolean walkInCash = isWalkIn(booking)
+        Payment payment = paymentRepository.findByBookingId(locked.getId()).orElse(null);
+        boolean walkInCash = isWalkIn(locked)
                 || (payment != null && "WALK_IN_CASH".equals(payment.getPaymentGateway()));
         boolean needsGatewayRefund = !walkInCash
                 && payment != null
@@ -376,48 +395,78 @@ public class BookingServiceImpl implements BookingService {
                 && preview.getRefundAmount().signum() > 0
                 && (payment.getStatus() == PaymentStatus.SUCCESS || payment.getStatus() == PaymentStatus.PAID);
 
-        String payHereRefundRef = null;
         if (needsGatewayRefund) {
             if (payment.getGatewayReference() == null || payment.getGatewayReference().isBlank()) {
                 throw new BadRequestException(
                         "This payment has no PayHere payment id yet. Wait for payment confirmation, then try cancelling again."
                 );
             }
-            // Call PayHere before mutating booking so a failed refund leaves the reservation intact.
-            payHereRefundRef = payHereRefundClient.refund(
-                    payment.getGatewayReference(),
-                    preview.getRefundAmount(),
-                    preview.getAmountPaid(),
-                    "Booking " + booking.getBookingRef() + " cancelled"
-            );
-        }
 
-        booking.setStatus(BookingStatus.CANCELLED);
-        booking.setCancelledAt(LocalDateTime.now());
-        booking.setCancelledBy(actor);
-        booking.setCancellationReason(reason);
-        booking.setCancellationFee(preview.getCancellationFee());
-        booking.setRefundAmount(preview.getRefundAmount());
-
-        if (needsGatewayRefund) {
-            if (refundRepository.findByBookingId(booking.getId()).isEmpty()) {
-                refundRepository.save(Refund.builder()
-                        .booking(booking)
-                        .payment(payment)
-                        .amount(preview.getRefundAmount())
-                        .mode("PAYHERE")
-                        .status("SUCCEEDED")
-                        .reference(payHereRefundRef)
-                        .processedAt(LocalDateTime.now())
-                        .build());
+            Refund existing = refundRepository.findByBookingId(locked.getId()).orElse(null);
+            if (existing != null) {
+                String refundStatus = existing.getStatus() == null ? "" : existing.getStatus().trim().toUpperCase();
+                if ("SUCCEEDED".equals(refundStatus) || "PROCESSING".equals(refundStatus)) {
+                    throw new BadRequestException(
+                            "A refund is already in progress or completed for this booking."
+                    );
+                }
             }
+
+            // Persist refund intent before calling PayHere so retries cannot double-refund.
+            String pendingRef = "CANCEL-" + locked.getBookingRef() + "-" + System.currentTimeMillis();
+            Refund refund = existing != null ? existing : Refund.builder()
+                    .booking(locked)
+                    .payment(payment)
+                    .amount(preview.getRefundAmount())
+                    .mode("PAYHERE")
+                    .status("PROCESSING")
+                    .reference(pendingRef)
+                    .processedAt(LocalDateTime.now())
+                    .build();
+            refund.setAmount(preview.getRefundAmount());
+            refund.setMode("PAYHERE");
+            refund.setStatus("PROCESSING");
+            refund.setProcessedAt(LocalDateTime.now());
+            if (refund.getReference() == null || refund.getReference().isBlank()) {
+                refund.setReference(pendingRef);
+            }
+            refundRepository.saveAndFlush(refund);
+
+            String payHereRefundRef;
+            try {
+                payHereRefundRef = payHereRefundClient.refund(
+                        payment.getGatewayReference(),
+                        preview.getRefundAmount(),
+                        preview.getAmountPaid(),
+                        "Booking " + locked.getBookingRef() + " cancelled"
+                );
+            } catch (RuntimeException ex) {
+                refund.setStatus("FAILED");
+                refund.setProcessedAt(LocalDateTime.now());
+                refundRepository.save(refund);
+                throw ex;
+            }
+
+            refund.setStatus("SUCCEEDED");
+            if (payHereRefundRef != null && !payHereRefundRef.isBlank()) {
+                refund.setReference(payHereRefundRef);
+            }
+            refund.setProcessedAt(LocalDateTime.now());
+            refundRepository.save(refund);
             payment.setStatus(preview.getRefundAmount().compareTo(preview.getAmountPaid()) >= 0
                     ? PaymentStatus.REFUNDED : PaymentStatus.PARTIALLY_REFUNDED);
             paymentRepository.save(payment);
         }
-        bookingRepository.save(booking);
-        notifyAfterCommit(booking.getCustomer(), booking, "BOOKING_CANCELLED");
-        return cancellationResponse(booking);
+
+        locked.setStatus(BookingStatus.CANCELLED);
+        locked.setCancelledAt(LocalDateTime.now());
+        locked.setCancelledBy(actor);
+        locked.setCancellationReason(reason);
+        locked.setCancellationFee(preview.getCancellationFee());
+        locked.setRefundAmount(preview.getRefundAmount());
+        bookingRepository.save(locked);
+        notifyAfterCommit(locked.getCustomer(), locked, "BOOKING_CANCELLED");
+        return cancellationResponse(locked);
     }
 
     private CancellationPreviewResponse buildCancellationPreview(Booking booking) {
@@ -534,7 +583,56 @@ public class BookingServiceImpl implements BookingService {
                 .status(payment.getStatus()).createdAt(payment.getCreatedAt()).build();
     }
 
+    @Override
+    @Transactional
+    public OwnerReviewResponse createBookingReview(String customerEmail, String bookingId, BookingReviewRequest request) {
+        Booking booking = requireCustomerBooking(customerEmail, bookingId);
+        if (reviewRepository.existsByBookingId(booking.getId())) {
+            throw new ConflictException("A review already exists for this booking");
+        }
+        if (!isBookingReviewable(booking)) {
+            throw new BadRequestException("This booking is not eligible for a review yet");
+        }
+        Customer customer = booking.getCustomer();
+        String comment = trimToNull(request.getComment());
+        Review review = Review.builder()
+                .venue(booking.getVenue())
+                .customer(customer)
+                .booking(booking)
+                .rating(request.getRating())
+                .comment(comment)
+                .build();
+        Review saved = reviewRepository.save(review);
+        String customerName = customer.getFirstName() + " " + customer.getLastName();
+        return OwnerReviewResponse.builder()
+                .id(saved.getId())
+                .venueId(booking.getVenue().getId())
+                .venueName(booking.getVenue().getName())
+                .customerName(customerName)
+                .rating(saved.getRating())
+                .comment(saved.getComment())
+                .createdAt(saved.getCreatedAt())
+                .build();
+    }
+
+    private boolean isBookingReviewable(Booking booking) {
+        BookingStatus status = booking.getStatus();
+        if (status == BookingStatus.CANCELLED
+                || status == BookingStatus.FAILED
+                || status == BookingStatus.NO_SHOW
+                || status == BookingStatus.PENDING) {
+            return false;
+        }
+        if (status != BookingStatus.CONFIRMED && status != BookingStatus.COMPLETED) {
+            return false;
+        }
+        LocalDateTime endAt = LocalDateTime.of(booking.getBookingDate(), booking.getEndTime());
+        return !LocalDateTime.now().isBefore(endAt);
+    }
+
     private BookingResponse mapToResponse(Booking booking, PaymentStatus paymentStatus) {
+        boolean hasReview = reviewRepository.existsByBookingId(booking.getId());
+        boolean canReview = !hasReview && isBookingReviewable(booking);
         return BookingResponse.builder().id(booking.getId()).bookingRef(booking.getBookingRef())
                 .customerId(booking.getCustomer() == null ? null : booking.getCustomer().getId())
                 .customerName(booking.getCustomer() == null ? booking.getGuestName()
@@ -549,7 +647,12 @@ public class BookingServiceImpl implements BookingService {
                 .guestPhone(booking.getGuestPhone()).createdAt(booking.getCreatedAt())
                 .invoiceAvailable(invoiceRepository.findByBookingId(booking.getId()).isPresent())
                 .contactName(booking.getContactName()).contactEmail(booking.getContactEmail())
-                .contactPhone(booking.getContactPhone()).specialRequests(booking.getSpecialRequests()).build();
+                .contactPhone(booking.getContactPhone()).specialRequests(booking.getSpecialRequests())
+                .refundAmount(booking.getRefundAmount())
+                .cancellationFee(booking.getCancellationFee())
+                .hasReview(hasReview)
+                .canReview(canReview)
+                .build();
     }
 
     private void notifyAfterCommit(Customer customer, Booking booking, String event) {

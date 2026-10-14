@@ -2,6 +2,7 @@ package lk.booknplay.entity;
 
 import jakarta.persistence.*;
 import lk.booknplay.enums.CourtStatus;
+import lk.booknplay.enums.FacilityType;
 import lombok.*;
 
 import java.math.BigDecimal;
@@ -36,6 +37,14 @@ public class Court {
     @Builder.Default
     @Column(name = "duration_minutes", nullable = false)
     private Integer durationMinutes = 60;
+
+    /**
+     * Indoor/Outdoor classification. Nullable at the database level until legacy
+     * rows are backfilled and confirmed by owners; required for new/updated courts.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "facility_type", length = 20)
+    private FacilityType facilityType;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)

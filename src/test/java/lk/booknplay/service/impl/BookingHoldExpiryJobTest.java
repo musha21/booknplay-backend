@@ -36,7 +36,7 @@ class BookingHoldExpiryJobTest {
 
     @BeforeEach
     void setUp() {
-        job = new BookingHoldExpiryJob(bookings, payments, 5);
+        job = new BookingHoldExpiryJob(bookings, payments, 10);
     }
 
     @Test
@@ -46,7 +46,7 @@ class BookingHoldExpiryJobTest {
                 .bookingRef("BNP-OLD")
                 .status(BookingStatus.PENDING)
                 .totalAmount(new BigDecimal("1000.00"))
-                .createdAt(LocalDateTime.now().minusMinutes(10))
+                .createdAt(LocalDateTime.now().minusMinutes(20))
                 .build();
         Payment payment = Payment.builder()
                 .id("pay-old")
@@ -59,23 +59,23 @@ class BookingHoldExpiryJobTest {
         when(bookings.findByStatusAndCreatedAtBefore(eq(BookingStatus.PENDING), any(LocalDateTime.class)))
                 .thenReturn(List.of(booking));
         when(payments.findByBookingId("book-old")).thenReturn(Optional.of(payment));
-        when(bookings.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(bookings.markFailedIfPending("book-old")).thenReturn(1);
         when(payments.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
         job.expireUnpaidHolds();
 
-        assertEquals(BookingStatus.FAILED, booking.getStatus());
         assertEquals(PaymentStatus.FAILED, payment.getStatus());
-        verify(bookings).save(booking);
+        verify(bookings).markFailedIfPending("book-old");
         verify(payments).save(payment);
     }
 
     @Test
-    void expireUnpaidHoldsDoesNotDowngradeSuccessfulPayment() {
+    void expireUnpaidHoldsSkipsSuccessfulPayment() {
         Booking booking = Booking.builder()
                 .id("book-paid")
+                .bookingRef("BNP-PAID")
                 .status(BookingStatus.PENDING)
-                .createdAt(LocalDateTime.now().minusMinutes(10))
+                .createdAt(LocalDateTime.now().minusMinutes(20))
                 .build();
         Payment payment = Payment.builder()
                 .id("pay-ok")
@@ -86,25 +86,24 @@ class BookingHoldExpiryJobTest {
         when(bookings.findByStatusAndCreatedAtBefore(eq(BookingStatus.PENDING), any(LocalDateTime.class)))
                 .thenReturn(List.of(booking));
         when(payments.findByBookingId("book-paid")).thenReturn(Optional.of(payment));
-        when(bookings.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
         job.expireUnpaidHolds();
 
-        assertEquals(BookingStatus.FAILED, booking.getStatus());
         assertEquals(PaymentStatus.SUCCESS, payment.getStatus());
+        verify(bookings, never()).markFailedIfPending(any());
         verify(payments, never()).save(any());
     }
 
     @Test
     void holdTtlDefaultsToConfiguredMinutes() {
-        assertEquals(5, job.holdTtlMinutes());
+        assertEquals(10, job.holdTtlMinutes());
         ArgumentCaptor<LocalDateTime> cutoff = ArgumentCaptor.forClass(LocalDateTime.class);
         when(bookings.findByStatusAndCreatedAtBefore(eq(BookingStatus.PENDING), cutoff.capture()))
                 .thenReturn(List.of());
 
-        LocalDateTime before = LocalDateTime.now().minusMinutes(5).minusSeconds(2);
+        LocalDateTime before = LocalDateTime.now().minusMinutes(10).minusSeconds(2);
         job.expireUnpaidHolds();
-        LocalDateTime after = LocalDateTime.now().minusMinutes(5).plusSeconds(2);
+        LocalDateTime after = LocalDateTime.now().minusMinutes(10).plusSeconds(2);
 
         LocalDateTime used = cutoff.getValue();
         assertTrue(!used.isBefore(before));

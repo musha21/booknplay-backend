@@ -25,6 +25,11 @@ class PublicSearchArchivedVenueTest {
     @Mock private VenueRepository venueRepository;
     @Mock private BusinessRepository businessRepository;
     @Mock private CourtRepository courtRepository;
+    @Mock private lk.booknplay.repository.SportRepository sportRepository;
+    @Mock private lk.booknplay.repository.OperatingHoursRepository operatingHoursRepository;
+    @Mock private lk.booknplay.repository.ReviewRepository reviewRepository;
+    @Mock private lk.booknplay.repository.PromotionRepository promotionRepository;
+    @Mock private AvailabilityService availabilityService;
 
     @InjectMocks
     private PublicSearchServiceImpl publicSearchService;

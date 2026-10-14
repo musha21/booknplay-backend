@@ -3,6 +3,7 @@ package lk.booknplay.controller.owner;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lk.booknplay.dto.response.DailyEarningsResponse;
 import lk.booknplay.dto.response.EarningsSummaryResponse;
+import lk.booknplay.dto.response.OwnerPayoutSummaryResponse;
 import lk.booknplay.dto.response.PayoutResponse;
 import lk.booknplay.service.OwnerEarningsService;
 import lk.booknplay.util.ApiResponse;
@@ -43,8 +44,21 @@ public class OwnerEarningsController {
                 ownerEarningsService.getDaily(authentication.getName(), from, to, view)));
     }
 
+    @GetMapping("/payouts/summary")
+    public ResponseEntity<ApiResponse<OwnerPayoutSummaryResponse>> payoutSummary(Authentication authentication) {
+        return ResponseEntity.ok(ApiResponse.success(
+                ownerEarningsService.payoutSummary(authentication.getName())));
+    }
+
     @GetMapping("/payouts")
     public ResponseEntity<ApiResponse<List<PayoutResponse>>> payouts(Authentication authentication) {
         return ResponseEntity.ok(ApiResponse.success(ownerEarningsService.listPayouts(authentication.getName())));
+    }
+
+    @GetMapping("/payouts/{id}")
+    public ResponseEntity<ApiResponse<PayoutResponse>> payoutDetail(
+            Authentication authentication, @PathVariable String id) {
+        return ResponseEntity.ok(ApiResponse.success(
+                ownerEarningsService.getPayout(authentication.getName(), id)));
     }
 }
