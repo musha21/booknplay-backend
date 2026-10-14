@@ -44,6 +44,7 @@ smslenz.env
 graphify-out/
 .cursor/
 db-review/
+ROADMAP.md
 
 ### Logs ###
 *.log
