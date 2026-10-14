@@ -6,6 +6,7 @@ import lk.booknplay.dto.response.OwnerReviewResponse;
 import lk.booknplay.dto.response.PromotionResponse;
 import lk.booknplay.dto.response.SportResponse;
 import lk.booknplay.dto.response.VenueResponse;
+import lk.booknplay.enums.FacilityType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
@@ -17,6 +18,7 @@ import java.util.List;
 public interface PublicSearchService {
     List<BusinessResponse> getPublicBusinesses();
     Page<VenueResponse> searchVenues(
+            String businessId,
             String city,
             String sportId,
             String name,
@@ -25,7 +27,7 @@ public interface PublicSearchService {
             BigDecimal minPrice,
             BigDecimal maxPrice,
             String amenity,
-            String indoorOutdoor,
+            FacilityType facilityType,
             Double minRating,
             Double lat,
             Double lng,

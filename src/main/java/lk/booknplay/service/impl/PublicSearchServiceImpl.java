@@ -17,6 +17,7 @@ import lk.booknplay.entity.Review;
 import lk.booknplay.entity.Sport;
 import lk.booknplay.entity.Venue;
 import lk.booknplay.enums.CourtStatus;
+import lk.booknplay.enums.FacilityType;
 import lk.booknplay.enums.VenueStatus;
 import lk.booknplay.exception.ResourceNotFoundException;
 import lk.booknplay.repository.BusinessRepository;
@@ -74,6 +75,7 @@ public class PublicSearchServiceImpl implements PublicSearchService {
     @Override
     @Transactional(readOnly = true)
     public Page<VenueResponse> searchVenues(
+            String businessId,
             String city,
             String sportId,
             String name,
@@ -82,7 +84,7 @@ public class PublicSearchServiceImpl implements PublicSearchService {
             BigDecimal minPrice,
             BigDecimal maxPrice,
             String amenity,
-            String indoorOutdoor,
+            FacilityType facilityType,
             Double minRating,
             Double lat,
             Double lng,
@@ -91,19 +93,23 @@ public class PublicSearchServiceImpl implements PublicSearchService {
         Pageable sorted = pageable.getSort().isSorted()
                 ? PageRequest.of(0, 500, pageable.getSort())
                 : PageRequest.of(0, 500, Sort.by(Sort.Direction.DESC, "createdAt"));
-        String cityFilter = (lat != null && lng != null) ? null : blankToNull(city);
+        // When filtering by business, do not force a city lock (premium / partner deep-links).
+        String cityFilter = blankToNull(businessId) != null
+                ? null
+                : ((lat != null && lng != null) ? null : blankToNull(city));
         List<VenueResponse> mapped = venueRepository.searchVenues(
                         List.of(VenueStatus.ACTIVE, VenueStatus.APPROVED),
+                        blankToNull(businessId),
                         cityFilter,
                         blankToNull(sportId),
+                        facilityType,
                         blankToNull(name),
                         sorted)
                 .getContent()
                 .stream()
-                .map(venue -> mapVenueToResponse(venue, date, time, blankToNull(sportId)))
+                .map(venue -> mapVenueToResponse(venue, date, time, blankToNull(sportId), facilityType))
                 .filter(venue -> matchesPrice(venue, minPrice, maxPrice))
                 .filter(venue -> matchesAmenity(venue, amenity))
-                .filter(venue -> matchesIndoorOutdoor(venue, indoorOutdoor))
                 .filter(venue -> matchesRating(venue, minRating))
                 .filter(venue -> matchesRadius(venue, lat, lng, radiusKm))
                 .filter(venue -> date == null || (venue.getAvailableCourtCount() != null && venue.getAvailableCourtCount() > 0))
@@ -125,7 +131,7 @@ public class PublicSearchServiceImpl implements PublicSearchService {
             throw new ResourceNotFoundException("Venue not found with id: " + id);
         }
 
-        VenueResponse response = mapVenueToResponse(venue, null, null, null);
+        VenueResponse response = mapVenueToResponse(venue, null, null, null, null);
         List<CourtResponse> courts = courtRepository.findByVenueIdAndStatus(id, CourtStatus.ACTIVE)
                 .stream()
                 .map(this::mapCourtToResponse)
@@ -139,6 +145,7 @@ public class PublicSearchServiceImpl implements PublicSearchService {
     public List<SportResponse> getAllActiveSports() {
         return sportRepository.findByIsActiveTrue()
                 .stream()
+                .sorted(Comparator.comparing(Sport::getName, String.CASE_INSENSITIVE_ORDER))
                 .map(this::mapSportToResponse)
                 .toList();
     }
@@ -171,7 +178,7 @@ public class PublicSearchServiceImpl implements PublicSearchService {
                 .toList();
     }
 
-    private VenueResponse mapVenueToResponse(Venue venue, LocalDate date, LocalTime time, String sportId) {
+    private VenueResponse mapVenueToResponse(Venue venue, LocalDate date, LocalTime time, String sportId, FacilityType facilityType) {
         List<Court> courts = courtRepository.findByVenueId(venue.getId());
         List<Court> active = courts.stream().filter(court -> court.getStatus() == CourtStatus.ACTIVE).toList();
         java.math.BigDecimal starting = active.stream()
@@ -218,7 +225,7 @@ public class PublicSearchServiceImpl implements PublicSearchService {
                 .currency("LKR")
                 .rating(avgRating)
                 .reviewCount(reviews)
-                .availableCourtCount(countAvailableCourts(active, date, time, sportId))
+                .availableCourtCount(countAvailableCourts(active, date, time, sportId, facilityType))
                 .operatingHours(operatingHoursRepository.findByVenueId(venue.getId()).stream()
                         .sorted(Comparator.comparing(OperatingHours::getDayOfWeek))
                         .map(this::mapHours)
@@ -234,12 +241,14 @@ public class PublicSearchServiceImpl implements PublicSearchService {
                                 .sortOrder(img.getSortOrder())
                                 .build())
                         .toList())
+                .courts(active.stream().map(this::mapCourtToResponse).toList())
                 .build();
     }
 
-    private int countAvailableCourts(List<Court> courts, LocalDate date, LocalTime time, String sportId) {
+    private int countAvailableCourts(List<Court> courts, LocalDate date, LocalTime time, String sportId, FacilityType facilityType) {
         List<Court> relevant = courts.stream()
                 .filter(court -> sportId == null || (court.getSport() != null && sportId.equals(court.getSport().getId())))
+                .filter(court -> facilityType == null || facilityType == court.getFacilityType())
                 .toList();
         if (date == null) {
             return relevant.size();
@@ -278,16 +287,6 @@ public class PublicSearchServiceImpl implements PublicSearchService {
                 .anyMatch(item -> item != null && item.toLowerCase(Locale.ROOT).contains(target));
     }
 
-    private boolean matchesIndoorOutdoor(VenueResponse venue, String indoorOutdoor) {
-        String needle = blankToNull(indoorOutdoor);
-        if (needle == null) return true;
-        String type = String.valueOf(venue.getVenueType() == null ? "" : venue.getVenueType()).toLowerCase(Locale.ROOT);
-        String want = needle.toLowerCase(Locale.ROOT);
-        if (want.contains("indoor")) return type.contains("indoor");
-        if (want.contains("outdoor")) return type.contains("outdoor");
-        return type.contains(want);
-    }
-
     private boolean matchesRating(VenueResponse venue, Double minRating) {
         if (minRating == null) return true;
         double rating = venue.getRating() == null ? 0 : venue.getRating();
@@ -306,7 +305,7 @@ public class PublicSearchServiceImpl implements PublicSearchService {
         double dLng = Math.toRadians(lng2 - lng1);
         double a = Math.sin(dLat / 2) * Math.sin(dLat / 2)
                 + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2))
-                * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+                + Math.sin(dLng / 2) * Math.sin(dLng / 2);
         return 2 * EARTH_KM * Math.asin(Math.min(1, Math.sqrt(a)));
     }
 
@@ -402,6 +401,7 @@ public class PublicSearchServiceImpl implements PublicSearchService {
                 .name(court.getName())
                 .hourlyRate(court.getHourlyRate())
                 .durationMinutes(court.getDurationMinutes())
+                .facilityType(court.getFacilityType())
                 .status(court.getStatus())
                 .build();
     }

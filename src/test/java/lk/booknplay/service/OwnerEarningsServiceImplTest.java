@@ -3,9 +3,9 @@ package lk.booknplay.service;
 import lk.booknplay.dto.response.EarningsSummaryResponse;
 import lk.booknplay.entity.Booking;
 import lk.booknplay.entity.Business;
+import lk.booknplay.enums.BookingSource;
 import lk.booknplay.enums.BookingStatus;
 import lk.booknplay.repository.BookingRepository;
-import lk.booknplay.repository.PayoutRepository;
 import lk.booknplay.service.impl.OwnerEarningsServiceImpl;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -31,7 +31,7 @@ class OwnerEarningsServiceImplTest {
     @Mock
     private BookingRepository bookingRepository;
     @Mock
-    private PayoutRepository payoutRepository;
+    private PayoutSettlementService payoutSettlementService;
     @Mock
     private PlanEntitlementService planEntitlementService;
 
@@ -53,6 +53,7 @@ class OwnerEarningsServiceImplTest {
                 .bookingDate(LocalDate.of(2026, 9, 12))
                 .totalAmount(new BigDecimal("10000.00"))
                 .status(BookingStatus.CONFIRMED)
+                .source(BookingSource.ONLINE)
                 .build();
         when(bookingRepository.findForEarnings(eq("biz-1"), any(), any(), any())).thenReturn(List.of(booking));
 
@@ -67,5 +68,43 @@ class OwnerEarningsServiceImplTest {
         assertEquals(new BigDecimal("10000.00"), summary.getGross());
         assertEquals(new BigDecimal("1000.00"), summary.getCommission());
         assertEquals(new BigDecimal("9000.00"), summary.getNet());
+    }
+
+    @Test
+    void getSummary_ExcludesWalkInBookings() {
+        Business business = Business.builder()
+                .id("biz-1")
+                .commissionPercent(new BigDecimal("10.00"))
+                .build();
+        doNothing().when(ownerAccessService).requireStaffPermission(eq("owner@example.com"), any());
+        when(ownerAccessService.requireBusiness("owner@example.com")).thenReturn(business);
+        doNothing().when(planEntitlementService).assertEarnings(business);
+
+        Booking walkIn = Booking.builder()
+                .id("b-walk")
+                .bookingDate(LocalDate.of(2026, 9, 12))
+                .totalAmount(new BigDecimal("5000.00"))
+                .status(BookingStatus.CONFIRMED)
+                .source(BookingSource.WALK_IN)
+                .build();
+        Booking online = Booking.builder()
+                .id("b-online")
+                .bookingDate(LocalDate.of(2026, 9, 12))
+                .totalAmount(new BigDecimal("10000.00"))
+                .status(BookingStatus.CONFIRMED)
+                .source(BookingSource.ONLINE)
+                .build();
+        when(bookingRepository.findForEarnings(eq("biz-1"), any(), any(), any()))
+                .thenReturn(List.of(walkIn, online));
+
+        EarningsSummaryResponse summary = ownerEarningsService.getSummary(
+                "owner@example.com",
+                LocalDate.of(2026, 9, 1),
+                LocalDate.of(2026, 9, 30),
+                null
+        );
+
+        assertEquals(1, summary.getBookingCount());
+        assertEquals(new BigDecimal("10000.00"), summary.getGross());
     }
 }

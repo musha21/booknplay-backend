@@ -12,6 +12,8 @@ import org.springframework.stereotype.Repository;
 public interface ReviewRepository extends JpaRepository<Review, String> {
     Page<Review> findByVenueIdOrderByCreatedAtDesc(String venueId, Pageable pageable);
 
+    boolean existsByBookingId(String bookingId);
+
     long countByVenueId(String venueId);
 
     @Query("SELECT AVG(r.rating) FROM Review r WHERE r.venue.id = :venueId")

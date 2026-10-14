@@ -357,10 +357,37 @@ public class OwnerPortalServiceImpl implements OwnerPortalService {
     @Transactional
     public OwnerSettingsResponse updateSettings(String email, OwnerSettingsUpdateRequest request) {
         Business business = ownerAccessService.requireMutableOwner(email);
-        if (request.getBankName() != null) business.setBankName(blankToNull(request.getBankName()));
-        if (request.getBankAccountName() != null) business.setBankAccountName(blankToNull(request.getBankAccountName()));
-        if (request.getBankAccountNumber() != null) business.setBankAccountNumber(blankToNull(request.getBankAccountNumber()));
-        if (request.getBankBranch() != null) business.setBankBranch(blankToNull(request.getBankBranch()));
+        boolean bankChanged = false;
+        if (request.getBankName() != null) {
+            String next = blankToNull(request.getBankName());
+            bankChanged |= !java.util.Objects.equals(business.getBankName(), next);
+            business.setBankName(next);
+        }
+        if (request.getBankAccountName() != null) {
+            String next = blankToNull(request.getBankAccountName());
+            bankChanged |= !java.util.Objects.equals(business.getBankAccountName(), next);
+            business.setBankAccountName(next);
+        }
+        if (request.getBankAccountNumber() != null) {
+            String next = blankToNull(request.getBankAccountNumber());
+            bankChanged |= !java.util.Objects.equals(business.getBankAccountNumber(), next);
+            business.setBankAccountNumber(next);
+        }
+        if (request.getBankBranch() != null) {
+            String next = blankToNull(request.getBankBranch());
+            bankChanged |= !java.util.Objects.equals(business.getBankBranch(), next);
+            business.setBankBranch(next);
+        }
+        if (request.getPayoutFrequency() != null) {
+            business.setPayoutFrequency(request.getPayoutFrequency());
+        }
+        if (bankChanged) {
+            business.setBankVerifiedAt(null);
+            business.setBankVerifiedBy(null);
+            business.setBankVerificationStatus(hasBankDetails(business)
+                    ? lk.booknplay.enums.BankVerificationStatus.PENDING_REVIEW
+                    : lk.booknplay.enums.BankVerificationStatus.UNVERIFIED);
+        }
         if (request.getNotifyBookingEmail() != null) business.setNotifyBookingEmail(request.getNotifyBookingEmail());
         if (request.getNotifyBookingSms() != null) business.setNotifyBookingSms(request.getNotifyBookingSms());
         if (request.getNotifyPaymentEmail() != null) business.setNotifyPaymentEmail(request.getNotifyPaymentEmail());
@@ -368,6 +395,12 @@ public class OwnerPortalServiceImpl implements OwnerPortalService {
         if (request.getContactPhone() != null) business.setContactPhone(blankToNull(request.getContactPhone()));
         if (request.getContactEmail() != null) business.setContactEmail(blankToNull(request.getContactEmail()));
         return mapSettings(businessRepository.save(business));
+    }
+
+    private boolean hasBankDetails(Business business) {
+        return business.getBankName() != null && !business.getBankName().isBlank()
+                && business.getBankAccountName() != null && !business.getBankAccountName().isBlank()
+                && business.getBankAccountNumber() != null && !business.getBankAccountNumber().isBlank();
     }
 
     @Override
@@ -511,8 +544,14 @@ public class OwnerPortalServiceImpl implements OwnerPortalService {
                 .contactPhone(business.getContactPhone())
                 .bankName(business.getBankName())
                 .bankAccountName(business.getBankAccountName())
-                .bankAccountNumber(business.getBankAccountNumber())
+                .bankAccountNumberMasked(lk.booknplay.util.BankAccountMasker.mask(business.getBankAccountNumber()))
                 .bankBranch(business.getBankBranch())
+                .payoutFrequency(business.getPayoutFrequency() != null
+                        ? business.getPayoutFrequency()
+                        : lk.booknplay.enums.PayoutFrequency.WEEKLY)
+                .bankVerificationStatus(business.getBankVerificationStatus() != null
+                        ? business.getBankVerificationStatus()
+                        : lk.booknplay.enums.BankVerificationStatus.UNVERIFIED)
                 .notifyBookingEmail(business.isNotifyBookingEmail())
                 .notifyBookingSms(business.isNotifyBookingSms())
                 .notifyPaymentEmail(business.isNotifyPaymentEmail())

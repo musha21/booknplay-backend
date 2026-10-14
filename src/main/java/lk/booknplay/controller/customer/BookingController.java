@@ -3,11 +3,13 @@ package lk.booknplay.controller.customer;
 import jakarta.validation.Valid;
 import lk.booknplay.dto.request.BookingCreateRequest;
 import lk.booknplay.dto.request.BookingConfirmRequest;
+import lk.booknplay.dto.request.BookingReviewRequest;
 import lk.booknplay.dto.response.BookingCheckoutResponse;
 import lk.booknplay.dto.response.BookingCancellationResponse;
 import lk.booknplay.dto.response.BookingQuoteResponse;
 import lk.booknplay.dto.response.BookingResponse;
 import lk.booknplay.dto.response.CancellationPreviewResponse;
+import lk.booknplay.dto.response.OwnerReviewResponse;
 import lk.booknplay.service.BookingService;
 import lk.booknplay.util.ApiResponse;
 import lk.booknplay.util.PageResponse;
@@ -41,6 +43,14 @@ public class BookingController {
             @Valid @RequestBody BookingCreateRequest request) {
         return ResponseEntity.ok(ApiResponse.success(
                 bookingService.quoteBooking(authentication.getName(), request)));
+    }
+
+    @GetMapping("/by-ref/{bookingRef}")
+    public ResponseEntity<ApiResponse<BookingResponse>> getBookingByRef(
+            Authentication authentication,
+            @PathVariable String bookingRef) {
+        BookingResponse response = bookingService.getBookingByRef(authentication.getName(), bookingRef);
+        return ResponseEntity.ok(ApiResponse.success(response));
     }
 
     @GetMapping("/{id}")
@@ -89,5 +99,15 @@ public class BookingController {
             @PathVariable String id) {
         BookingCancellationResponse response = bookingService.cancelBooking(authentication.getName(), id);
         return ResponseEntity.ok(ApiResponse.success("Booking cancelled successfully", response));
+    }
+
+    @PostMapping("/{id}/review")
+    public ResponseEntity<ApiResponse<OwnerReviewResponse>> createBookingReview(
+            Authentication authentication,
+            @PathVariable String id,
+            @Valid @RequestBody BookingReviewRequest request) {
+        OwnerReviewResponse response = bookingService.createBookingReview(authentication.getName(), id, request);
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.success("Review submitted successfully", response));
     }
 }

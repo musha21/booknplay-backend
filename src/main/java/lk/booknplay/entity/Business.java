@@ -1,6 +1,8 @@
 package lk.booknplay.entity;
 
 import jakarta.persistence.*;
+import lk.booknplay.enums.BankVerificationStatus;
+import lk.booknplay.enums.PayoutFrequency;
 import lombok.*;
 
 import java.math.BigDecimal;
@@ -64,6 +66,22 @@ public class Business {
     private String bankBranch;
 
     @Builder.Default
+    @Enumerated(EnumType.STRING)
+    @Column(name = "payout_frequency", nullable = false, length = 20)
+    private PayoutFrequency payoutFrequency = PayoutFrequency.WEEKLY;
+
+    @Builder.Default
+    @Enumerated(EnumType.STRING)
+    @Column(name = "bank_verification_status", nullable = false, length = 20)
+    private BankVerificationStatus bankVerificationStatus = BankVerificationStatus.UNVERIFIED;
+
+    @Column(name = "bank_verified_at")
+    private LocalDateTime bankVerifiedAt;
+
+    @Column(name = "bank_verified_by")
+    private String bankVerifiedBy;
+
+    @Builder.Default
     @Column(name = "notify_booking_email", nullable = false)
     private boolean notifyBookingEmail = true;
 
@@ -85,5 +103,11 @@ public class Business {
     @PrePersist
     protected void onCreate() {
         createdAt = LocalDateTime.now();
+        if (payoutFrequency == null) {
+            payoutFrequency = PayoutFrequency.WEEKLY;
+        }
+        if (bankVerificationStatus == null) {
+            bankVerificationStatus = BankVerificationStatus.UNVERIFIED;
+        }
     }
 }

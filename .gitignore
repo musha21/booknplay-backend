@@ -35,3 +35,16 @@ uploads/
 src/main/resources/application-local.properties
 payhere.sandbox.env
 
+### Local secrets / env (keep *.example tracked) ###
+smslenz.env
+*.env
+!*.env.example
+
+### Generated / local tooling ###
+graphify-out/
+.cursor/
+db-review/
+
+### Logs ###
+*.log
+

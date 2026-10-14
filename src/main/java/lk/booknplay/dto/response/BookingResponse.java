@@ -50,4 +50,11 @@ public class BookingResponse {
     private String contactEmail;
     private String contactPhone;
     private String specialRequests;
+    /** Set when a confirmed booking was cancelled with a computed refund. */
+    private BigDecimal refundAmount;
+    private BigDecimal cancellationFee;
+    /** True when this booking already has a customer review. */
+    private boolean hasReview;
+    /** True when the signed-in customer may submit a review for this booking. */
+    private boolean canReview;
 }

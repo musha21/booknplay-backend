@@ -1,5 +1,6 @@
 package lk.booknplay.dto.request;
 
+import lk.booknplay.enums.PayoutFrequency;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -14,6 +15,7 @@ public class OwnerSettingsUpdateRequest {
     private String bankAccountName;
     private String bankAccountNumber;
     private String bankBranch;
+    private PayoutFrequency payoutFrequency;
     private Boolean notifyBookingEmail;
     private Boolean notifyBookingSms;
     private Boolean notifyPaymentEmail;

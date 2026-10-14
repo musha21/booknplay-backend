@@ -1,6 +1,7 @@
 package lk.booknplay.dto.response;
 
 import lk.booknplay.enums.CourtStatus;
+import lk.booknplay.enums.FacilityType;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -22,5 +23,6 @@ public class CourtResponse {
     private String name;
     private BigDecimal hourlyRate;
     private Integer durationMinutes;
+    private FacilityType facilityType;
     private CourtStatus status;
 }

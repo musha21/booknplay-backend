@@ -1,6 +1,7 @@
 package lk.booknplay.service.impl;
 
 import lk.booknplay.entity.Booking;
+import lk.booknplay.entity.Payment;
 import lk.booknplay.enums.BookingStatus;
 import lk.booknplay.enums.PaymentStatus;
 import lk.booknplay.repository.BookingRepository;
@@ -14,9 +15,11 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Releases unpaid soft-holds so abandoned PayHere checkouts free the court again.
+ * Never downgrades a booking that already has a successful payment (notify vs expiry race).
  */
 @Component
 public class BookingHoldExpiryJob {
@@ -30,7 +33,7 @@ public class BookingHoldExpiryJob {
     public BookingHoldExpiryJob(
             BookingRepository bookingRepository,
             PaymentRepository paymentRepository,
-            @Value("${booknplay.booking.hold-ttl-minutes:5}") int holdTtlMinutes) {
+            @Value("${booknplay.booking.hold-ttl-minutes:10}") int holdTtlMinutes) {
         this.bookingRepository = bookingRepository;
         this.paymentRepository = paymentRepository;
         this.holdTtlMinutes = Math.max(1, holdTtlMinutes);
@@ -45,10 +48,30 @@ public class BookingHoldExpiryJob {
             return;
         }
         int released = 0;
+        int skippedPaid = 0;
         for (Booking booking : expired) {
-            booking.setStatus(BookingStatus.FAILED);
-            bookingRepository.save(booking);
-            paymentRepository.findByBookingId(booking.getId()).ifPresent(payment -> {
+            Optional<Payment> paymentOpt = paymentRepository.findByBookingId(booking.getId());
+            if (paymentOpt.isPresent()) {
+                PaymentStatus payStatus = paymentOpt.get().getStatus();
+                if (payStatus == PaymentStatus.SUCCESS
+                        || payStatus == PaymentStatus.PAID
+                        || payStatus == PaymentStatus.REFUNDED
+                        || payStatus == PaymentStatus.PARTIALLY_REFUNDED) {
+                    skippedPaid++;
+                    log.warn(
+                            "Skipping hold expiry for booking {} — payment already {}",
+                            booking.getBookingRef(),
+                            payStatus
+                    );
+                    continue;
+                }
+            }
+
+            int updated = bookingRepository.markFailedIfPending(booking.getId());
+            if (updated == 0) {
+                continue;
+            }
+            paymentOpt.ifPresent(payment -> {
                 if (payment.getStatus() == PaymentStatus.INITIATED
                         || payment.getStatus() == PaymentStatus.PROCESSING) {
                     payment.setStatus(PaymentStatus.FAILED);
@@ -57,7 +80,14 @@ public class BookingHoldExpiryJob {
             });
             released++;
         }
-        log.info("Expired {} unpaid PENDING booking hold(s) older than {} minutes", released, holdTtlMinutes);
+        if (released > 0 || skippedPaid > 0) {
+            log.info(
+                    "Expired {} unpaid PENDING hold(s); skipped {} paid; TTL={} minutes",
+                    released,
+                    skippedPaid,
+                    holdTtlMinutes
+            );
+        }
     }
 
     /** Package-visible for unit tests. */

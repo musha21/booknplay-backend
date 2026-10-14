@@ -18,6 +18,7 @@ import lk.booknplay.service.OwnerAccessService;
 import lk.booknplay.service.OwnerCourtService;
 import lk.booknplay.service.PlanEntitlementService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -54,13 +55,13 @@ public class OwnerCourtServiceImpl implements OwnerCourtService {
     public CourtResponse createCourt(String ownerEmail, String venueId, OwnerCourtRequest request) {
         Venue venue = ownerAccessService.requireMutableVenue(ownerEmail, venueId);
         planEntitlementService.assertCanCreateCourt(venue.getBusiness(), venueId);
-        Sport sport = sportRepository.findById(request.getSportId())
-                .orElseThrow(() -> new ResourceNotFoundException("Sport not found with id: " + request.getSportId()));
+        Sport sport = resolveSport(request);
         Court court = Court.builder()
                 .venue(venue)
                 .sport(sport)
                 .name(request.getName())
                 .hourlyRate(request.getHourlyRate())
+                .facilityType(request.getFacilityType())
                 .status(CourtStatus.ACTIVE)
                 .build();
         return mapCourt(courtRepository.save(court));
@@ -70,11 +71,11 @@ public class OwnerCourtServiceImpl implements OwnerCourtService {
     @Transactional
     public CourtResponse updateCourt(String ownerEmail, String courtId, OwnerCourtRequest request) {
         Court court = ownerAccessService.requireMutableCourt(ownerEmail, courtId);
-        Sport sport = sportRepository.findById(request.getSportId())
-                .orElseThrow(() -> new ResourceNotFoundException("Sport not found with id: " + request.getSportId()));
+        Sport sport = resolveSport(request);
         court.setName(request.getName());
         court.setSport(sport);
         court.setHourlyRate(request.getHourlyRate());
+        court.setFacilityType(request.getFacilityType());
         return mapCourt(courtRepository.save(court));
     }
 
@@ -129,6 +130,41 @@ public class OwnerCourtServiceImpl implements OwnerCourtService {
                 .toList();
     }
 
+    /**
+     * Resolves the sport for a court from either an existing {@code sportId} or a new
+     * {@code sportName}. New sports are created case-insensitively and reuse any
+     * existing row. Concurrent creations are handled by catching the unique-constraint
+     * violation and re-reading the winning row.
+     */
+    private Sport resolveSport(OwnerCourtRequest request) {
+        String sportId = request.getSportId();
+        if (sportId != null && !sportId.isBlank()) {
+            return sportRepository.findById(sportId.trim())
+                    .orElseThrow(() -> new ResourceNotFoundException("Sport not found with id: " + sportId));
+        }
+        String sportName = request.getSportName();
+        if (sportName != null && !sportName.isBlank()) {
+            String normalized = sportName.trim().replaceAll("\\s+", " ");
+            return findOrCreateSport(normalized);
+        }
+        throw new BadRequestException("sportId or sportName is required");
+    }
+
+    private Sport findOrCreateSport(String normalized) {
+        return sportRepository.findByNameIgnoreCase(normalized)
+                .orElseGet(() -> {
+                    try {
+                        return sportRepository.saveAndFlush(
+                                Sport.builder().name(normalized).isActive(true).build());
+                    } catch (DataIntegrityViolationException race) {
+                        // Another request created the same sport first; reuse it.
+                        return sportRepository.findByNameIgnoreCase(normalized)
+                                .orElseThrow(() -> new BadRequestException(
+                                        "Could not resolve sport: " + normalized));
+                    }
+                });
+    }
+
     private CourtResponse mapCourt(Court court) {
         return CourtResponse.builder()
                 .id(court.getId())
@@ -138,6 +174,8 @@ public class OwnerCourtServiceImpl implements OwnerCourtService {
                 .sportName(court.getSport().getName())
                 .name(court.getName())
                 .hourlyRate(court.getHourlyRate())
+                .durationMinutes(court.getDurationMinutes())
+                .facilityType(court.getFacilityType())
                 .status(court.getStatus())
                 .build();
     }
