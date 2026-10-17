@@ -4,8 +4,10 @@ import lk.booknplay.dto.response.DailyEarningsResponse;
 import lk.booknplay.dto.response.EarningsSummaryResponse;
 import lk.booknplay.dto.response.OwnerPayoutSummaryResponse;
 import lk.booknplay.dto.response.PayoutResponse;
+import lk.booknplay.dto.response.SportEarningsBreakdown;
 import lk.booknplay.entity.Booking;
 import lk.booknplay.entity.Business;
+import lk.booknplay.entity.Sport;
 import lk.booknplay.enums.BookingSource;
 import lk.booknplay.enums.BookingStatus;
 import lk.booknplay.enums.StaffPermission;
@@ -26,6 +28,7 @@ import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 @Service
@@ -42,19 +45,25 @@ public class OwnerEarningsServiceImpl implements OwnerEarningsService {
 
     @Override
     @Transactional(readOnly = true)
-    public EarningsSummaryResponse getSummary(String ownerEmail, LocalDate from, LocalDate to, String view) {
+    public EarningsSummaryResponse getSummary(
+            String ownerEmail, LocalDate from, LocalDate to, String view, String sportId, String venueId) {
         Range range = resolveRange(from, to);
         ownerAccessService.requireStaffPermission(ownerEmail, StaffPermission.EARNINGS);
         Business business = ownerAccessService.requireBusiness(ownerEmail);
         assertEarningsView(business, view, range);
+        String sportFilter = blankToNull(sportId);
+        String venueFilter = blankToNull(venueId);
         List<Booking> bookings = bookingRepository.findForEarnings(
-                business.getId(), range.from(), range.to(), EARNING_STATUSES).stream()
+                        business.getId(), range.from(), range.to(), EARNING_STATUSES).stream()
                 .filter(b -> b.getSource() != BookingSource.WALK_IN)
+                .filter(b -> matchesSport(b, sportFilter))
+                .filter(b -> matchesVenue(b, venueFilter))
                 .toList();
         BigDecimal percent = business.getCommissionPercent() != null
                 ? business.getCommissionPercent()
                 : new BigDecimal("10.00");
         List<DailyEarningsResponse> daily = bucketDaily(bookings, percent);
+        List<SportEarningsBreakdown> bySport = bucketBySport(bookings, percent);
         BigDecimal gross = daily.stream().map(DailyEarningsResponse::getGross).reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal commission = daily.stream().map(DailyEarningsResponse::getCommission).reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal net = daily.stream().map(DailyEarningsResponse::getNet).reduce(BigDecimal.ZERO, BigDecimal::add);
@@ -68,13 +77,15 @@ public class OwnerEarningsServiceImpl implements OwnerEarningsService {
                 .net(net)
                 .commissionPercent(percent)
                 .daily(daily)
+                .bySport(bySport)
                 .build();
     }
 
     @Override
     @Transactional(readOnly = true)
-    public List<DailyEarningsResponse> getDaily(String ownerEmail, LocalDate from, LocalDate to, String view) {
-        return getSummary(ownerEmail, from, to, view).getDaily();
+    public List<DailyEarningsResponse> getDaily(
+            String ownerEmail, LocalDate from, LocalDate to, String view, String sportId, String venueId) {
+        return getSummary(ownerEmail, from, to, view, sportId, venueId).getDaily();
     }
 
     @Override
@@ -115,6 +126,7 @@ public class OwnerEarningsServiceImpl implements OwnerEarningsService {
         for (Map.Entry<LocalDate, List<Booking>> entry : byDate.entrySet()) {
             BigDecimal gross = entry.getValue().stream()
                     .map(Booking::getTotalAmount)
+                    .filter(Objects::nonNull)
                     .reduce(BigDecimal.ZERO, BigDecimal::add);
             BigDecimal commission = gross.multiply(percent).divide(new BigDecimal("100"), 2, RoundingMode.HALF_UP);
             daily.add(DailyEarningsResponse.builder()
@@ -127,6 +139,49 @@ public class OwnerEarningsServiceImpl implements OwnerEarningsService {
         }
         daily.sort(Comparator.comparing(DailyEarningsResponse::getDate));
         return daily;
+    }
+
+    private List<SportEarningsBreakdown> bucketBySport(List<Booking> bookings, BigDecimal percent) {
+        Map<String, List<Booking>> bySport = bookings.stream()
+                .filter(b -> b.getSport() != null && b.getSport().getId() != null)
+                .collect(Collectors.groupingBy(b -> b.getSport().getId()));
+        List<SportEarningsBreakdown> rows = new ArrayList<>();
+        for (Map.Entry<String, List<Booking>> entry : bySport.entrySet()) {
+            Sport sport = entry.getValue().get(0).getSport();
+            BigDecimal gross = entry.getValue().stream()
+                    .map(Booking::getTotalAmount)
+                    .filter(Objects::nonNull)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+            BigDecimal commission = gross.multiply(percent).divide(new BigDecimal("100"), 2, RoundingMode.HALF_UP);
+            rows.add(SportEarningsBreakdown.builder()
+                    .sportId(entry.getKey())
+                    .sportName(sport != null && sport.getName() != null ? sport.getName() : entry.getKey())
+                    .bookingCount(entry.getValue().size())
+                    .gross(gross)
+                    .commission(commission)
+                    .net(gross.subtract(commission))
+                    .build());
+        }
+        rows.sort(Comparator
+                .comparing(SportEarningsBreakdown::getGross, Comparator.nullsLast(Comparator.reverseOrder()))
+                .thenComparing(SportEarningsBreakdown::getSportName, Comparator.nullsLast(String::compareToIgnoreCase)));
+        return rows;
+    }
+
+    private static boolean matchesSport(Booking booking, String sportId) {
+        if (sportId == null) return true;
+        return booking.getSport() != null && sportId.equals(booking.getSport().getId());
+    }
+
+    private static boolean matchesVenue(Booking booking, String venueId) {
+        if (venueId == null) return true;
+        return booking.getVenue() != null && venueId.equals(booking.getVenue().getId());
+    }
+
+    private static String blankToNull(String value) {
+        if (value == null) return null;
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     private Range resolveRange(LocalDate from, LocalDate to) {

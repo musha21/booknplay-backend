@@ -16,7 +16,6 @@ Spring Boot API for **BooknPlay** — multi-sport venue discovery, court booking
 |------|------|
 | This repository (`booknplay`) | Backend API |
 | Sibling `booknplay-frontend` | Customer, owner, and admin UIs |
-| [ROADMAP.md](ROADMAP.md) | Architecture, phases, and progress |
 
 ## Prerequisites
 
@@ -68,5 +67,4 @@ Focused run:
 
 ## Related
 
-- [ROADMAP.md](ROADMAP.md) — system blueprint and roadmap
 - `graphify-out/` — Graphify knowledge graph for navigating the codebase (`graphify update .` after code changes)

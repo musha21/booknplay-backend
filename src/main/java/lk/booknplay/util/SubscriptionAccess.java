@@ -12,8 +12,20 @@ public final class SubscriptionAccess {
 
     public static final int TRIAL_DURATION_DAYS = 90;
     public static final int TRIAL_WARNING_DAYS = 14;
+    public static final int MIN_TRIAL_DURATION_DAYS = 1;
+    public static final int MAX_TRIAL_DURATION_DAYS = 365;
 
     private SubscriptionAccess() {
+    }
+
+    /** Prefer configured catalog value; otherwise fall back to {@link #TRIAL_DURATION_DAYS}. */
+    public static int resolveTrialDurationDays(Integer configured) {
+        if (configured != null
+                && configured >= MIN_TRIAL_DURATION_DAYS
+                && configured <= MAX_TRIAL_DURATION_DAYS) {
+            return configured;
+        }
+        return TRIAL_DURATION_DAYS;
     }
 
     public static long daysRemaining(BusinessSubscription subscription, LocalDateTime now) {

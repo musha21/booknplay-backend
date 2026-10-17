@@ -30,10 +30,13 @@ public class AdminSubscriptionPlanUpdateRequest {
     private Boolean earningsEnabled;
     private Boolean reportsEnabled;
     private Boolean advancedReportsEnabled;
+    private Boolean promotionsEnabled;
     private BigDecimal commissionPercent;
     private Integer maxStaff;
     /** When true, clears maxStaff (unlimited). */
     private Boolean unlimitedStaff;
+    /** TRIAL plan only: default free-trial length in days (1–365). */
+    private Integer trialDurationDays;
 
     @NotBlank
     private String reason;

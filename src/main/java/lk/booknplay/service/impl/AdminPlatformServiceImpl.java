@@ -136,7 +136,7 @@ public class AdminPlatformServiceImpl implements AdminPlatformService {
             subscription.setPlanCode(PlanCode.TRIAL);
             subscription.setStatus(SubscriptionStatus.TRIALING);
             subscription.setTrialStartsAt(now);
-            subscription.setTrialEndsAt(now.plusDays(SubscriptionAccess.TRIAL_DURATION_DAYS));
+            subscription.setTrialEndsAt(now.plusDays(resolveTrialDurationDays()));
         }
 
         // Force paid plan without period dates
@@ -230,6 +230,7 @@ public class AdminPlatformServiceImpl implements AdminPlatformService {
         if (request.getEarningsEnabled() != null) plan.setEarningsEnabled(request.getEarningsEnabled());
         if (request.getReportsEnabled() != null) plan.setReportsEnabled(request.getReportsEnabled());
         if (request.getAdvancedReportsEnabled() != null) plan.setAdvancedReportsEnabled(request.getAdvancedReportsEnabled());
+        if (request.getPromotionsEnabled() != null) plan.setPromotionsEnabled(request.getPromotionsEnabled());
         if (request.getCommissionPercent() != null) {
             BigDecimal commission = request.getCommissionPercent();
             if (commission.signum() < 0 || commission.compareTo(new BigDecimal("100")) > 0) {
@@ -249,6 +250,19 @@ public class AdminPlatformServiceImpl implements AdminPlatformService {
                 throw new BadRequestException("maxStaff must be at least 1");
             }
             plan.setMaxStaff(request.getMaxStaff());
+        }
+        if (request.getTrialDurationDays() != null) {
+            if (code != PlanCode.TRIAL) {
+                throw new BadRequestException("trialDurationDays can only be set on the TRIAL plan");
+            }
+            int days = request.getTrialDurationDays();
+            if (days < SubscriptionAccess.MIN_TRIAL_DURATION_DAYS
+                    || days > SubscriptionAccess.MAX_TRIAL_DURATION_DAYS) {
+                throw new BadRequestException("trialDurationDays must be between "
+                        + SubscriptionAccess.MIN_TRIAL_DURATION_DAYS + " and "
+                        + SubscriptionAccess.MAX_TRIAL_DURATION_DAYS);
+            }
+            plan.setTrialDurationDays(days);
         }
         planRepository.save(plan);
         audit(adminEmail, "SUBSCRIPTION_PLAN_UPDATED", "SUBSCRIPTION_PLAN", code.name(), request.getReason());
@@ -285,11 +299,13 @@ public class AdminPlatformServiceImpl implements AdminPlatformService {
                 .limits(plan == null ? null : SubscriptionResponse.PlanLimits.builder()
                         .maxVenues(plan.getMaxVenues())
                         .maxCourtsPerVenue(plan.getMaxCourtsPerVenue())
+                        .maxStaff(plan.getMaxStaff())
                         .calendarEnabled(plan.isCalendarEnabled())
                         .walkInEnabled(plan.isWalkInEnabled())
                         .earningsEnabled(plan.isEarningsEnabled())
                         .reportsEnabled(plan.isReportsEnabled())
                         .advancedReportsEnabled(plan.isAdvancedReportsEnabled())
+                        .promotionsEnabled(plan.isPromotionsEnabled())
                         .build())
                 .build();
     }
@@ -316,9 +332,17 @@ public class AdminPlatformServiceImpl implements AdminPlatformService {
                 .earningsEnabled(plan.isEarningsEnabled())
                 .reportsEnabled(plan.isReportsEnabled())
                 .advancedReportsEnabled(plan.isAdvancedReportsEnabled())
+                .promotionsEnabled(plan.isPromotionsEnabled())
                 .commissionPercent(plan.getCommissionPercent())
                 .maxStaff(plan.getMaxStaff())
+                .trialDurationDays(plan.getTrialDurationDays())
                 .build();
+    }
+
+    private int resolveTrialDurationDays() {
+        return planRepository.findByCode(PlanCode.TRIAL)
+                .map(plan -> SubscriptionAccess.resolveTrialDurationDays(plan.getTrialDurationDays()))
+                .orElse(SubscriptionAccess.TRIAL_DURATION_DAYS);
     }
 
     private VenueResponse venue(Venue v) {

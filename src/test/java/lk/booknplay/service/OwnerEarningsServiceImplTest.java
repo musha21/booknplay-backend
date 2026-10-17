@@ -3,6 +3,8 @@ package lk.booknplay.service;
 import lk.booknplay.dto.response.EarningsSummaryResponse;
 import lk.booknplay.entity.Booking;
 import lk.booknplay.entity.Business;
+import lk.booknplay.entity.Sport;
+import lk.booknplay.entity.Venue;
 import lk.booknplay.enums.BookingSource;
 import lk.booknplay.enums.BookingStatus;
 import lk.booknplay.repository.BookingRepository;
@@ -54,6 +56,7 @@ class OwnerEarningsServiceImplTest {
                 .totalAmount(new BigDecimal("10000.00"))
                 .status(BookingStatus.CONFIRMED)
                 .source(BookingSource.ONLINE)
+                .sport(Sport.builder().id("sport-cricket").name("Cricket").build())
                 .build();
         when(bookingRepository.findForEarnings(eq("biz-1"), any(), any(), any())).thenReturn(List.of(booking));
 
@@ -61,6 +64,8 @@ class OwnerEarningsServiceImplTest {
                 "owner@example.com",
                 LocalDate.of(2026, 9, 1),
                 LocalDate.of(2026, 9, 30),
+                null,
+                null,
                 null
         );
 
@@ -68,6 +73,9 @@ class OwnerEarningsServiceImplTest {
         assertEquals(new BigDecimal("10000.00"), summary.getGross());
         assertEquals(new BigDecimal("1000.00"), summary.getCommission());
         assertEquals(new BigDecimal("9000.00"), summary.getNet());
+        assertEquals(1, summary.getBySport().size());
+        assertEquals("sport-cricket", summary.getBySport().get(0).getSportId());
+        assertEquals("Cricket", summary.getBySport().get(0).getSportName());
     }
 
     @Test
@@ -93,6 +101,7 @@ class OwnerEarningsServiceImplTest {
                 .totalAmount(new BigDecimal("10000.00"))
                 .status(BookingStatus.CONFIRMED)
                 .source(BookingSource.ONLINE)
+                .sport(Sport.builder().id("sport-cricket").name("Cricket").build())
                 .build();
         when(bookingRepository.findForEarnings(eq("biz-1"), any(), any(), any()))
                 .thenReturn(List.of(walkIn, online));
@@ -101,10 +110,73 @@ class OwnerEarningsServiceImplTest {
                 "owner@example.com",
                 LocalDate.of(2026, 9, 1),
                 LocalDate.of(2026, 9, 30),
+                null,
+                null,
                 null
         );
 
         assertEquals(1, summary.getBookingCount());
         assertEquals(new BigDecimal("10000.00"), summary.getGross());
+    }
+
+    @Test
+    void getSummary_FiltersBySportAndVenue() {
+        Business business = Business.builder()
+                .id("biz-1")
+                .commissionPercent(new BigDecimal("10.00"))
+                .build();
+        doNothing().when(ownerAccessService).requireStaffPermission(eq("owner@example.com"), any());
+        when(ownerAccessService.requireBusiness("owner@example.com")).thenReturn(business);
+        doNothing().when(planEntitlementService).assertEarnings(business);
+
+        Sport cricket = Sport.builder().id("sport-cricket").name("Cricket").build();
+        Sport badminton = Sport.builder().id("sport-badminton").name("Badminton").build();
+        Venue venueA = Venue.builder().id("venue-a").name("Court A").build();
+        Venue venueB = Venue.builder().id("venue-b").name("Court B").build();
+
+        Booking keep = Booking.builder()
+                .id("b-keep")
+                .bookingDate(LocalDate.of(2026, 9, 12))
+                .totalAmount(new BigDecimal("8000.00"))
+                .status(BookingStatus.CONFIRMED)
+                .source(BookingSource.ONLINE)
+                .sport(cricket)
+                .venue(venueA)
+                .build();
+        Booking wrongSport = Booking.builder()
+                .id("b-sport")
+                .bookingDate(LocalDate.of(2026, 9, 12))
+                .totalAmount(new BigDecimal("5000.00"))
+                .status(BookingStatus.CONFIRMED)
+                .source(BookingSource.ONLINE)
+                .sport(badminton)
+                .venue(venueA)
+                .build();
+        Booking wrongVenue = Booking.builder()
+                .id("b-venue")
+                .bookingDate(LocalDate.of(2026, 9, 13))
+                .totalAmount(new BigDecimal("7000.00"))
+                .status(BookingStatus.CONFIRMED)
+                .source(BookingSource.ONLINE)
+                .sport(cricket)
+                .venue(venueB)
+                .build();
+        when(bookingRepository.findForEarnings(eq("biz-1"), any(), any(), any()))
+                .thenReturn(List.of(keep, wrongSport, wrongVenue));
+
+        EarningsSummaryResponse summary = ownerEarningsService.getSummary(
+                "owner@example.com",
+                LocalDate.of(2026, 9, 1),
+                LocalDate.of(2026, 9, 30),
+                null,
+                "sport-cricket",
+                "venue-a"
+        );
+
+        assertEquals(1, summary.getBookingCount());
+        assertEquals(new BigDecimal("8000.00"), summary.getGross());
+        assertEquals(1, summary.getBySport().size());
+        assertEquals("sport-cricket", summary.getBySport().get(0).getSportId());
+        assertEquals(new BigDecimal("8000.00"), summary.getBySport().get(0).getGross());
     }
 }
