@@ -23,24 +23,55 @@ Spring Boot API for **BooknPlay** — multi-sport venue discovery, court booking
 - MySQL running locally (or reachable from your machine)
 - Maven Wrapper (`./mvnw` / `mvnw.cmd`) — no global Maven install required
 
+## Configuration profiles
+
+| Profile | File | Secrets |
+|---------|------|---------|
+| `local` | `application-local.properties` (gitignored) | Copy from `application-local.properties.example` |
+| `prod` | `application-prod.properties` | Environment variables only — see `production.env.example` |
+
+Shared non-secret defaults live in `application.properties`. There is **no** global import of the local file; with `SPRING_PROFILES_ACTIVE=prod`, local secrets are never loaded.
+
 ## Local setup
 
-1. Ensure MySQL is available. The default datasource URL can create the `booknplay` database if it does not exist (`createDatabaseIfNotExist=true`).
-2. Put local secrets and overrides in `src/main/resources/application-local.properties` (imported optionally by `application.properties`). Do **not** commit real passwords or JWT secrets.
-3. Start the API:
+1. Ensure MySQL is available (`createDatabaseIfNotExist=true` is set under the local profile).
+2. Copy `src/main/resources/application-local.properties.example` to `src/main/resources/application-local.properties` and fill in PayHere, SMSlenz, DB, and JWT values. Do **not** commit that file.
+3. Start with the `local` profile:
 
 ```bash
+export SPRING_PROFILES_ACTIVE=local
 ./mvnw spring-boot:run
 ```
 
-On Windows:
+On Windows (cmd):
+
+```bat
+set SPRING_PROFILES_ACTIVE=local
+mvnw.cmd spring-boot:run
+```
+
+Or:
 
 ```bash
-mvnw.cmd spring-boot:run
+./mvnw spring-boot:run -Dspring-boot.run.profiles=local
 ```
 
 - Server: `http://localhost:8080`
 - API base: `/api/v1`
+
+## Production (VPS)
+
+1. Create the MySQL schema and user separately (this repo does not initialize production DB).
+2. Copy `production.env.example` to a secure path on the VPS (e.g. `/etc/booknplay/production.env`), set real values including `BOOKNPLAY_FRONTEND_URL` (your Vercel origin).
+3. Run with `SPRING_PROFILES_ACTIVE=prod` and those env vars loaded. Hibernate uses `ddl-auto=validate`.
+
+```bash
+export SPRING_PROFILES_ACTIVE=prod
+set -a && source /etc/booknplay/production.env && set +a
+java -jar booknplay-*.jar
+```
+
+Do not deploy or mutate production from this README — operators own VPS setup.
 
 ## API surface
 
@@ -68,3 +99,5 @@ Focused run:
 ## Related
 
 - `graphify-out/` — Graphify knowledge graph for navigating the codebase (`graphify update .` after code changes)
+- `production.env.example` — required VPS environment variables
+- `payhere.sandbox.env.example` / `smslenz.env.example` — optional local env helpers for the `local` profile

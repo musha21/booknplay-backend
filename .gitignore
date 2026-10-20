@@ -32,13 +32,16 @@ build/
 ### VS Code ###
 .vscode/
 uploads/
-src/main/resources/application-local.properties
-payhere.sandbox.env
 
-### Local secrets / env (keep *.example tracked) ###
+### Local / production secrets (keep *.example tracked) ###
+src/main/resources/application-local.properties
+src/main/resources/application-local-*.properties
+payhere.sandbox.env
 smslenz.env
+production.env
 *.env
 !*.env.example
+!**/application-local.properties.example
 
 ### Generated / local tooling ###
 graphify-out/
@@ -48,4 +51,3 @@ ROADMAP.md
 
 ### Logs ###
 *.log
-
