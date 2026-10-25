@@ -46,6 +46,7 @@ class PayHereRefundCancelTest {
     @Mock BookingQuoteRepository quoteRepository;
     @Mock RefundRepository refundRepository;
     @Mock CancellationPolicyRepository cancellationPolicyRepository;
+    @Mock ReviewRepository reviewRepository;
     @Mock BookingRulesService bookingRulesService;
     @Mock NotificationService notificationService;
     @Mock PayHereRefundClient payHereRefundClient;
@@ -107,6 +108,7 @@ class PayHereRefundCancelTest {
         when(bookingRepository.findByIdForUpdate("booking-1")).thenReturn(Optional.of(booking));
         when(paymentRepository.findByBookingId("booking-1")).thenReturn(Optional.of(payment));
         when(refundRepository.findByBookingId("booking-1")).thenReturn(Optional.empty());
+        when(reviewRepository.existsByBookingId(any())).thenReturn(false);
         when(payHereRefundClient.refund(
                 eq("320027150501"),
                 eq(new BigDecimal("3000.00")),
@@ -149,6 +151,7 @@ class PayHereRefundCancelTest {
         when(bookingRepository.findByIdForUpdate("booking-1")).thenReturn(Optional.of(booking));
         when(paymentRepository.findByBookingId("booking-1")).thenReturn(Optional.of(payment));
         when(refundRepository.findByBookingId("booking-1")).thenReturn(Optional.empty());
+        when(reviewRepository.existsByBookingId(any())).thenReturn(false);
         when(payHereRefundClient.refund(
                 eq("320027150501"),
                 eq(new BigDecimal("1500.00")),
@@ -271,6 +274,7 @@ class PayHereRefundCancelTest {
         when(bookingRepository.findByIdForUpdate("booking-1")).thenReturn(Optional.of(booking));
         when(paymentRepository.findByBookingId("booking-1")).thenReturn(Optional.empty());
         when(refundRepository.findByBookingId("booking-1")).thenReturn(Optional.empty());
+        when(reviewRepository.existsByBookingId(any())).thenReturn(false);
         when(bookingRepository.save(any(Booking.class))).thenAnswer(inv -> inv.getArgument(0));
 
         BookingCancellationResponse response = bookingService.cancelBookingAsOwner("booking-1", "Venue owner cancelled booking");

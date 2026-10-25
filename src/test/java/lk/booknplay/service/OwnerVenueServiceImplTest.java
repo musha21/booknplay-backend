@@ -35,8 +35,6 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
-
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -52,6 +50,7 @@ import static org.mockito.Mockito.when;
 class OwnerVenueServiceImplTest {
 
     @Mock private OwnerAccessService ownerAccessService;
+    @Mock private PlanEntitlementService planEntitlementService;
     @Mock private VenueRepository venueRepository;
     @Mock private CourtRepository courtRepository;
     @Mock private VenueImageRepository venueImageRepository;
@@ -91,8 +90,8 @@ class OwnerVenueServiceImplTest {
 
     @Test
     void submitVenue_RequiresPhotoAndSpaces() {
-        when(ownerAccessService.requireOwner("owner@example.com")).thenReturn(business);
-        when(ownerAccessService.requireVenue("owner@example.com", "venue-1")).thenReturn(venue);
+        when(ownerAccessService.requireMutableOwner("owner@example.com")).thenReturn(business);
+        when(ownerAccessService.requireMutableVenue("owner@example.com", "venue-1")).thenReturn(venue);
         when(courtRepository.findByVenueId("venue-1")).thenReturn(List.of());
 
         assertThrows(BadRequestException.class,
@@ -101,8 +100,8 @@ class OwnerVenueServiceImplTest {
 
     @Test
     void submitVenue_MovesDraftToPendingApproval() {
-        when(ownerAccessService.requireOwner("owner@example.com")).thenReturn(business);
-        when(ownerAccessService.requireVenue("owner@example.com", "venue-1")).thenReturn(venue);
+        when(ownerAccessService.requireMutableOwner("owner@example.com")).thenReturn(business);
+        when(ownerAccessService.requireMutableVenue("owner@example.com", "venue-1")).thenReturn(venue);
         List<Court> courts = List.of(
                 Court.builder().id("c1").venue(venue).name("Court 1")
                         .sport(Sport.builder().id("s1").name("Futsal").build())
@@ -125,8 +124,8 @@ class OwnerVenueServiceImplTest {
 
     @Test
     void uploadMedia_RejectsMoreThanSixPhotos() {
-        when(ownerAccessService.requireOwner("owner@example.com")).thenReturn(business);
-        when(ownerAccessService.requireVenue("owner@example.com", "venue-1")).thenReturn(venue);
+        when(ownerAccessService.requireMutableOwner("owner@example.com")).thenReturn(business);
+        when(ownerAccessService.requireMutableVenue("owner@example.com", "venue-1")).thenReturn(venue);
         when(venueImageRepository.countByVenueId("venue-1")).thenReturn(6L);
 
         MockMultipartFile image = new MockMultipartFile("images", "a.jpg", "image/jpeg", new byte[]{1, 2, 3});
@@ -137,8 +136,8 @@ class OwnerVenueServiceImplTest {
 
     @Test
     void uploadMedia_SetsCoverFromFirstOrderedPhoto() {
-        when(ownerAccessService.requireOwner("owner@example.com")).thenReturn(business);
-        when(ownerAccessService.requireVenue("owner@example.com", "venue-1")).thenReturn(venue);
+        when(ownerAccessService.requireMutableOwner("owner@example.com")).thenReturn(business);
+        when(ownerAccessService.requireMutableVenue("owner@example.com", "venue-1")).thenReturn(venue);
         when(venueImageRepository.countByVenueId("venue-1")).thenReturn(0L);
         when(fileStorageService.store(any(), eq("venue/venue-1"))).thenReturn("https://cdn.example/v1.jpg");
         when(venueImageRepository.save(any(VenueImage.class))).thenAnswer(invocation -> {
@@ -164,8 +163,8 @@ class OwnerVenueServiceImplTest {
 
     @Test
     void archiveVenue_BlocksWhenFutureBookingsExist() {
-        when(ownerAccessService.requireOwner("owner@example.com")).thenReturn(business);
-        when(ownerAccessService.requireVenue("owner@example.com", "venue-1")).thenReturn(venue);
+        when(ownerAccessService.requireMutableOwner("owner@example.com")).thenReturn(business);
+        when(ownerAccessService.requireMutableVenue("owner@example.com", "venue-1")).thenReturn(venue);
         when(bookingRepository.existsFutureBooking(
                 eq("venue-1"),
                 eq(List.of(BookingStatus.PENDING, BookingStatus.CONFIRMED)),
@@ -181,8 +180,8 @@ class OwnerVenueServiceImplTest {
     @Test
     void archiveAndRestore_PreservesPreviousStatus() {
         venue.setStatus(VenueStatus.APPROVED);
-        when(ownerAccessService.requireOwner("owner@example.com")).thenReturn(business);
-        when(ownerAccessService.requireVenue("owner@example.com", "venue-1")).thenReturn(venue);
+        when(ownerAccessService.requireMutableOwner("owner@example.com")).thenReturn(business);
+        when(ownerAccessService.requireMutableVenue("owner@example.com", "venue-1")).thenReturn(venue);
         when(bookingRepository.existsFutureBooking(any(), anyList(), any(), any())).thenReturn(false);
         when(venueRepository.save(venue)).thenReturn(venue);
         stubMapVenue();
@@ -213,8 +212,8 @@ class OwnerVenueServiceImplTest {
     @Test
     void updateVenue_DoesNotClearCoverWhenOmitted() {
         venue.setCoverImageUrl("https://cdn.example/keep.jpg");
-        when(ownerAccessService.requireOwner("owner@example.com")).thenReturn(business);
-        when(ownerAccessService.requireVenue("owner@example.com", "venue-1")).thenReturn(venue);
+        when(ownerAccessService.requireMutableOwner("owner@example.com")).thenReturn(business);
+        when(ownerAccessService.requireMutableVenue("owner@example.com", "venue-1")).thenReturn(venue);
         when(venueRepository.save(venue)).thenReturn(venue);
         stubMapVenue();
 
