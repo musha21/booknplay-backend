@@ -84,6 +84,33 @@ class HomepageConfigServiceImplTest {
     }
 
     @Test
+    void publicConfig_filtersFeaturedIdsWithoutLiveVenues() {
+        when(configs.findFirstByStatusOrderByVersionDesc(HomepageConfigStatus.PUBLISHED)).thenReturn(Optional.of(
+                HomepageConfig.builder().id("pub").version(1).status(HomepageConfigStatus.PUBLISHED)
+                        .heading("Find a court").premiumSliderEnabled(false).premiumSliderSeconds(6)
+                        .featuredBusinessIds("biz-live,biz-dead")
+                        .featuredVenueIds("v-live,v-archived")
+                        .build()));
+        Business liveBiz = Business.builder().id("biz-live").name("Live").ownerId("owner-1").build();
+        Business deadBiz = Business.builder().id("biz-dead").name("Dead").ownerId("owner-1").build();
+        when(businesses.findById("biz-live")).thenReturn(Optional.of(liveBiz));
+        when(businesses.findById("biz-dead")).thenReturn(Optional.of(deadBiz));
+        when(users.findById("owner-1")).thenReturn(Optional.of(owner));
+        when(venues.findByBusinessId("biz-live")).thenReturn(List.of(
+                Venue.builder().id("v-live").status(VenueStatus.ACTIVE).city("Kandy").build()));
+        when(venues.findByBusinessId("biz-dead")).thenReturn(List.of(
+                Venue.builder().id("v-archived").status(VenueStatus.DELETED).city("Kandy").build()));
+        when(venues.findById("v-live")).thenReturn(Optional.of(
+                Venue.builder().id("v-live").status(VenueStatus.ACTIVE).city("Kandy").build()));
+        when(venues.findById("v-archived")).thenReturn(Optional.of(
+                Venue.builder().id("v-archived").status(VenueStatus.DELETED).city("Kandy").build()));
+
+        var config = service.publicConfig();
+        assertEquals(List.of("biz-live"), config.getFeaturedBusinessIds());
+        assertEquals(List.of("v-live"), config.getFeaturedVenueIds());
+    }
+
+    @Test
     void publicConfig_keepsHomepageUploadImageUrl() {
         when(configs.findFirstByStatusOrderByVersionDesc(HomepageConfigStatus.PUBLISHED)).thenReturn(Optional.of(
                 HomepageConfig.builder().id("pub").version(1).status(HomepageConfigStatus.PUBLISHED)

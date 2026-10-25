@@ -5,12 +5,16 @@ import lk.booknplay.enums.PlanCode;
 import lk.booknplay.enums.SubscriptionStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 public interface BusinessSubscriptionRepository extends JpaRepository<BusinessSubscription, String> {
     Optional<BusinessSubscription> findByBusinessId(String businessId);
 
     boolean existsByBusinessId(String businessId);
+
+    List<BusinessSubscription> findByStatusIn(Collection<SubscriptionStatus> statuses);
 
     long countByStatus(SubscriptionStatus status);
 

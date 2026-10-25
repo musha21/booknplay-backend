@@ -33,4 +33,13 @@ public interface OwnerSubscriptionService {
     void confirmPayHereNotify(Map<String, String> fields);
 
     boolean canMutateBusiness(String businessId);
+
+    /** Archive live venues when trial/subscription ends (public discovery hides DELETED). Returns count archived. */
+    int archiveVenuesForExpiredSubscription(String businessId);
+
+    /** Restore venues archived by subscription expiry (not owner-manual archives). */
+    void restoreVenuesAfterSubscriptionReactivation(String businessId);
+
+    /** Expire due subscriptions and archive their venues (scheduled job + tests). */
+    int expireDueSubscriptionsAndArchiveVenues();
 }

@@ -80,6 +80,11 @@ public class Venue {
     @Column(name = "archived_from_status", length = 40)
     private VenueStatus archivedFromStatus;
 
+    /** True when archived because subscription/trial expired (restored on renew; not owner-manual). */
+    @Column(name = "archived_by_subscription", nullable = false)
+    @Builder.Default
+    private boolean archivedBySubscription = false;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 

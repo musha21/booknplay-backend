@@ -251,6 +251,12 @@ public class HomepageConfigServiceImpl implements HomepageConfigService {
         List<PremiumSlideResponse> slides = publicView && !c.isPremiumSliderEnabled()
                 ? List.of()
                 : resolveSlides(c, publicView);
+        List<String> featuredBusinessIds = list(c.getFeaturedBusinessIds());
+        List<String> featuredVenueIds = list(c.getFeaturedVenueIds());
+        if (publicView) {
+            featuredBusinessIds = filterPublicFeaturedBusinessIds(featuredBusinessIds);
+            featuredVenueIds = filterPublicFeaturedVenueIds(featuredVenueIds);
+        }
         return HomepageConfigResponse.builder()
                 .id(c.getId())
                 .version(c.getVersion())
@@ -267,8 +273,8 @@ public class HomepageConfigServiceImpl implements HomepageConfigService {
                 .showOwnerPromotion(c.isShowOwnerPromotion())
                 .showTrust(c.isShowTrust())
                 .sectionOrder(list(c.getSectionOrder()))
-                .featuredBusinessIds(list(c.getFeaturedBusinessIds()))
-                .featuredVenueIds(list(c.getFeaturedVenueIds()))
+                .featuredBusinessIds(featuredBusinessIds)
+                .featuredVenueIds(featuredVenueIds)
                 .featuredSportIds(list(c.getFeaturedSportIds()))
                 .premiumSliderEnabled(c.isPremiumSliderEnabled())
                 .premiumSliderAutoplay(c.isPremiumSliderAutoplay())
@@ -283,6 +289,36 @@ public class HomepageConfigServiceImpl implements HomepageConfigService {
                 .updatedAt(c.getUpdatedAt())
                 .publishedAt(c.getPublishedAt())
                 .build();
+    }
+
+    private List<String> filterPublicFeaturedBusinessIds(List<String> ids) {
+        if (ids.isEmpty()) {
+            return ids;
+        }
+        return ids.stream()
+                .filter(id -> {
+                    Business business = businesses.findById(id).orElse(null);
+                    if (business == null) {
+                        return false;
+                    }
+                    User owner = users.findById(business.getOwnerId()).orElse(null);
+                    if (owner == null || !owner.isEnabled() || owner.isLocked()) {
+                        return false;
+                    }
+                    return !liveVenues(business.getId()).isEmpty();
+                })
+                .toList();
+    }
+
+    private List<String> filterPublicFeaturedVenueIds(List<String> ids) {
+        if (ids.isEmpty()) {
+            return ids;
+        }
+        return ids.stream()
+                .filter(id -> venues.findById(id)
+                        .map(venue -> LIVE_STATUSES.contains(venue.getStatus()))
+                        .orElse(false))
+                .toList();
     }
 
     private List<PremiumSlideResponse> resolveSlides(HomepageConfig config, boolean publicView) {
