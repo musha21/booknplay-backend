@@ -44,6 +44,8 @@ public interface VenueRepository extends JpaRepository<Venue, String> {
     List<Venue> findByBusinessId(String businessId);
     List<Venue> findByBusinessIdAndStatusNot(String businessId, VenueStatus status);
     List<Venue> findByBusinessIdAndStatus(String businessId, VenueStatus status);
+    List<Venue> findByBusinessIdAndStatusIn(String businessId, List<VenueStatus> statuses);
+    List<Venue> findByBusinessIdAndStatusAndArchivedBySubscriptionTrue(String businessId, VenueStatus status);
     List<Venue> findByStatus(VenueStatus status);
     long countByStatus(VenueStatus status);
 

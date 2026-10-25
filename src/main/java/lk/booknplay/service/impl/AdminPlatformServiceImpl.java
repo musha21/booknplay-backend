@@ -153,8 +153,30 @@ public class AdminPlatformServiceImpl implements AdminPlatformService {
         if (subscription.getPlanCode() != null) {
             ownerSubscriptionService.applyPlanCommission(entity.getId(), subscription.getPlanCode());
         }
+        syncVenuesForAdminSubscriptionChange(subscription);
         audit(adminEmail, "BUSINESS_SUBSCRIPTION_CHANGED", "BUSINESS", id, request.getReason());
         return business(entity);
+    }
+
+    private void syncVenuesForAdminSubscriptionChange(BusinessSubscription subscription) {
+        SubscriptionStatus status = subscription.getStatus();
+        if (status == SubscriptionStatus.EXPIRED || status == SubscriptionStatus.CANCELED) {
+            ownerSubscriptionService.archiveVenuesForExpiredSubscription(subscription.getBusinessId());
+            return;
+        }
+        if (status == SubscriptionStatus.ACTIVE || status == SubscriptionStatus.PAST_DUE) {
+            ownerSubscriptionService.restoreVenuesAfterSubscriptionReactivation(subscription.getBusinessId());
+            return;
+        }
+        if (status == SubscriptionStatus.TRIALING) {
+            LocalDateTime end = SubscriptionAccess.resolveEnd(subscription);
+            LocalDateTime now = LocalDateTime.now();
+            if (end != null && !end.isBefore(now)) {
+                ownerSubscriptionService.restoreVenuesAfterSubscriptionReactivation(subscription.getBusinessId());
+            } else {
+                ownerSubscriptionService.archiveVenuesForExpiredSubscription(subscription.getBusinessId());
+            }
+        }
     }
 
     @Override

@@ -34,6 +34,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.util.UriComponentsBuilder;
 
+import lk.booknplay.entity.Venue;
+
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.Arrays;
@@ -335,6 +337,83 @@ public class OwnerSubscriptionServiceImpl implements OwnerSubscriptionService {
                 .orElse(false);
     }
 
+    @Override
+    @Transactional
+    public int archiveVenuesForExpiredSubscription(String businessId) {
+        if (businessId == null || businessId.isBlank()) {
+            return 0;
+        }
+        List<VenueStatus> live = List.of(VenueStatus.ACTIVE, VenueStatus.APPROVED);
+        List<Venue> venues = venueRepository.findByBusinessIdAndStatusIn(businessId, live);
+        if (venues.isEmpty()) {
+            return 0;
+        }
+        for (Venue venue : venues) {
+            venue.setArchivedFromStatus(venue.getStatus());
+            venue.setStatus(VenueStatus.DELETED);
+            venue.setArchivedBySubscription(true);
+        }
+        venueRepository.saveAll(venues);
+        log.info("Archived {} venue(s) for expired subscription business {}", venues.size(), businessId);
+        return venues.size();
+    }
+
+    @Override
+    @Transactional
+    public void restoreVenuesAfterSubscriptionReactivation(String businessId) {
+        if (businessId == null || businessId.isBlank()) {
+            return;
+        }
+        List<Venue> venues = venueRepository.findByBusinessIdAndStatusAndArchivedBySubscriptionTrue(
+                businessId, VenueStatus.DELETED);
+        if (venues.isEmpty()) {
+            return;
+        }
+        for (Venue venue : venues) {
+            VenueStatus restoreStatus = venue.getArchivedFromStatus() == null
+                    ? VenueStatus.DRAFT
+                    : venue.getArchivedFromStatus();
+            if (restoreStatus == VenueStatus.DELETED) {
+                restoreStatus = VenueStatus.DRAFT;
+            }
+            venue.setStatus(restoreStatus);
+            venue.setArchivedFromStatus(null);
+            venue.setArchivedBySubscription(false);
+        }
+        venueRepository.saveAll(venues);
+        log.info("Restored {} subscription-archived venue(s) for business {}", venues.size(), businessId);
+    }
+
+    @Override
+    @Transactional
+    public int expireDueSubscriptionsAndArchiveVenues() {
+        LocalDateTime now = LocalDateTime.now();
+        List<SubscriptionStatus> open = List.of(
+                SubscriptionStatus.TRIALING,
+                SubscriptionStatus.ACTIVE,
+                SubscriptionStatus.PAST_DUE
+        );
+        int affected = 0;
+        for (BusinessSubscription subscription : subscriptionRepository.findByStatusIn(open)) {
+            SubscriptionStatus before = subscription.getStatus();
+            SubscriptionAccess.refreshExpiredInMemory(subscription, now);
+            if (before == subscription.getStatus()) {
+                continue;
+            }
+            subscriptionRepository.save(subscription);
+            archiveVenuesForExpiredSubscription(subscription.getBusinessId());
+            affected++;
+        }
+        // Backfill: already EXPIRED/CANCELED rows never hit the transition path above.
+        List<SubscriptionStatus> closed = List.of(SubscriptionStatus.EXPIRED, SubscriptionStatus.CANCELED);
+        for (BusinessSubscription subscription : subscriptionRepository.findByStatusIn(closed)) {
+            if (archiveVenuesForExpiredSubscription(subscription.getBusinessId()) > 0) {
+                affected++;
+            }
+        }
+        return affected;
+    }
+
     @Transactional
     public void activatePaidPlan(String businessId, PlanCode planCode, BillingInterval interval) {
         BusinessSubscription subscription = subscriptionRepository.findByBusinessId(businessId)
@@ -347,6 +426,7 @@ public class OwnerSubscriptionServiceImpl implements OwnerSubscriptionService {
         subscription.setCancelAtPeriodEnd(false);
         subscriptionRepository.save(subscription);
         applyPlanCommission(businessId, planCode);
+        restoreVenuesAfterSubscriptionReactivation(businessId);
     }
 
     private int resolveTrialDurationDays() {
@@ -368,7 +448,11 @@ public class OwnerSubscriptionServiceImpl implements OwnerSubscriptionService {
                 .trialEndsAt(end)
                 .cancelAtPeriodEnd(false)
                 .build();
-        return subscriptionRepository.save(subscription);
+        BusinessSubscription saved = subscriptionRepository.save(subscription);
+        if (!stillTrial) {
+            archiveVenuesForExpiredSubscription(business.getId());
+        }
+        return saved;
     }
 
     private BusinessSubscription persistIfExpired(BusinessSubscription subscription) {
@@ -376,7 +460,11 @@ public class OwnerSubscriptionServiceImpl implements OwnerSubscriptionService {
         SubscriptionStatus before = subscription.getStatus();
         SubscriptionAccess.refreshExpiredInMemory(subscription, now);
         if (before != subscription.getStatus()) {
-            return subscriptionRepository.save(subscription);
+            BusinessSubscription saved = subscriptionRepository.save(subscription);
+            if (saved.getStatus() == SubscriptionStatus.EXPIRED) {
+                archiveVenuesForExpiredSubscription(saved.getBusinessId());
+            }
+            return saved;
         }
         return subscription;
     }
