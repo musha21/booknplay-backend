@@ -1,5 +1,6 @@
 package lk.booknplay.controller.admin;
 
+import lk.booknplay.dto.request.AdminCreateBusinessRequest;
 import lk.booknplay.dto.request.AdminSubscriptionPlanUpdateRequest;
 import lk.booknplay.dto.request.AdminSubscriptionUpdateRequest;
 import lk.booknplay.dto.response.*;
@@ -35,6 +36,15 @@ public class AdminPlatformController {
     @GetMapping("/businesses")
     public ResponseEntity<ApiResponse<PageResponse<AdminBusinessResponse>>> businesses(Pageable pageable) {
         return ResponseEntity.ok(ApiResponse.success(PageResponse.from(service.businesses(pageable))));
+    }
+
+    @PostMapping("/businesses")
+    public ResponseEntity<ApiResponse<AdminCreateBusinessResponse>> createBusiness(
+            @Valid @RequestBody AdminCreateBusinessRequest request,
+            Authentication auth) {
+        return ResponseEntity.ok(ApiResponse.success(
+                "Business created. Share the temporary credentials with the owner only.",
+                service.createBusiness(request, auth.getName())));
     }
 
     @PatchMapping("/businesses/{id}/access")

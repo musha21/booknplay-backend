@@ -1,13 +1,18 @@
 package lk.booknplay.service.impl;
 
+import lk.booknplay.dto.request.AdminCreateBusinessRequest;
 import lk.booknplay.dto.request.AdminSubscriptionPlanUpdateRequest;
 import lk.booknplay.dto.request.AdminSubscriptionUpdateRequest;
 import lk.booknplay.dto.response.*;
 import lk.booknplay.entity.*;
+import lk.booknplay.enums.BankVerificationStatus;
+import lk.booknplay.enums.PayoutFrequency;
 import lk.booknplay.enums.PlanCode;
+import lk.booknplay.enums.Role;
 import lk.booknplay.enums.SubscriptionStatus;
 import lk.booknplay.enums.VenueStatus;
 import lk.booknplay.exception.BadRequestException;
+import lk.booknplay.exception.ConflictException;
 import lk.booknplay.exception.ResourceNotFoundException;
 import lk.booknplay.repository.*;
 import lk.booknplay.service.AdminPlatformService;
@@ -16,6 +21,7 @@ import lk.booknplay.util.SubscriptionAccess;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -38,6 +44,7 @@ public class AdminPlatformServiceImpl implements AdminPlatformService {
     private final BusinessSubscriptionRepository subscriptionRepository;
     private final SubscriptionPlanRepository planRepository;
     private final OwnerSubscriptionService ownerSubscriptionService;
+    private final PasswordEncoder passwordEncoder;
 
     @Override
     @Transactional(readOnly = true)
@@ -79,6 +86,59 @@ public class AdminPlatformServiceImpl implements AdminPlatformService {
     @Transactional(readOnly = true)
     public Page<AdminBusinessResponse> businesses(Pageable pageable) {
         return businesses.findAll(pageable).map(this::business);
+    }
+
+    @Override
+    @Transactional
+    public AdminCreateBusinessResponse createBusiness(AdminCreateBusinessRequest request, String adminEmail) {
+        String email = request.getEmail() == null ? "" : request.getEmail().trim().toLowerCase();
+        if (users.existsByEmail(email)) {
+            throw new ConflictException("EMAIL_EXISTS", "Email already in use");
+        }
+
+        String temporaryPassword = request.getTemporaryPassword();
+        User user = users.save(User.builder()
+                .email(email)
+                .password(passwordEncoder.encode(temporaryPassword))
+                .role(Role.BUSINESS_OWNER)
+                .isEnabled(true)
+                .isLocked(false)
+                .build());
+
+        PayoutFrequency frequency = request.getPayoutFrequency() != null
+                ? request.getPayoutFrequency()
+                : PayoutFrequency.WEEKLY;
+        String bankName = trimToNull(request.getBankName());
+        String bankAccountName = trimToNull(request.getBankAccountName());
+        String bankAccountNumber = trimToNull(request.getBankAccountNumber());
+        String bankBranch = trimToNull(request.getBankBranch());
+        boolean hasBank = bankName != null && bankAccountName != null && bankAccountNumber != null;
+
+        Business entity = businesses.save(Business.builder()
+                .name(request.getBusinessName().trim())
+                .ownerId(user.getId())
+                .ownerName(request.getOwnerName().trim())
+                .address(request.getAddress().trim())
+                .contactEmail(request.getContactEmail() != null && !request.getContactEmail().isBlank()
+                        ? request.getContactEmail().trim()
+                        : email)
+                .contactPhone(request.getContactPhone().trim())
+                .commissionPercent(BigDecimal.ZERO)
+                .bankName(bankName)
+                .bankAccountName(bankAccountName)
+                .bankAccountNumber(bankAccountNumber)
+                .bankBranch(bankBranch)
+                .payoutFrequency(frequency)
+                .bankVerificationStatus(hasBank
+                        ? BankVerificationStatus.PENDING_REVIEW
+                        : BankVerificationStatus.UNVERIFIED)
+                .build());
+
+        ownerSubscriptionService.createTrialForBusiness(entity);
+        audit(adminEmail, "BUSINESS_CREATED", "BUSINESS", entity.getId(),
+                "Admin-provisioned business for owner " + email);
+
+        return AdminCreateBusinessResponse.from(business(entity), temporaryPassword);
     }
 
     @Override
@@ -373,5 +433,13 @@ public class AdminPlatformServiceImpl implements AdminPlatformService {
 
     private void audit(String email, String action, String type, String id, String reason) {
         auditLogs.save(AdminAuditLog.builder().adminEmail(email).action(action).resourceType(type).resourceId(id).reason(reason).build());
+    }
+
+    private static String trimToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 }
