@@ -1,8 +1,10 @@
 package lk.booknplay.service;
 
+import lk.booknplay.dto.request.AdminCreateBusinessRequest;
 import lk.booknplay.dto.request.AdminSubscriptionPlanUpdateRequest;
 import lk.booknplay.dto.request.AdminSubscriptionUpdateRequest;
 import lk.booknplay.dto.response.AdminBusinessResponse;
+import lk.booknplay.dto.response.AdminCreateBusinessResponse;
 import lk.booknplay.dto.response.AdminDashboardResponse;
 import lk.booknplay.dto.response.SubscriptionPlanResponse;
 import lk.booknplay.dto.response.VenueResponse;
@@ -18,6 +20,8 @@ import java.util.List;
 public interface AdminPlatformService {
     AdminDashboardResponse dashboard();
     Page<AdminBusinessResponse> businesses(Pageable pageable);
+    /** Provision owner user + business + trial; returns one-time temporary password for admin to share. */
+    AdminCreateBusinessResponse createBusiness(AdminCreateBusinessRequest request, String adminEmail);
     AdminBusinessResponse setBusinessAccess(String id, boolean enabled, boolean locked, String reason, String adminEmail);
     AdminBusinessResponse setCommission(String id, BigDecimal commissionPercent, String reason, String adminEmail);
     AdminBusinessResponse setBusinessSubscription(String id, AdminSubscriptionUpdateRequest request, String adminEmail);

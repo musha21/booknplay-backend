@@ -1,17 +1,23 @@
 package lk.booknplay.controller.admin;
 
 import jakarta.validation.Valid;
+import lk.booknplay.dto.request.AdminMarketingRequest;
 import lk.booknplay.dto.request.CustomerRegisterRequest;
 import lk.booknplay.dto.request.CustomerUpdateRequest;
+import lk.booknplay.dto.response.AdminMarketingResponse;
 import lk.booknplay.dto.response.CustomerResponse;
+import lk.booknplay.service.AdminMarketingService;
 import lk.booknplay.service.CustomerService;
 import lk.booknplay.util.ApiResponse;
 import lk.booknplay.util.PageResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Pageable;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -21,6 +27,7 @@ import org.springframework.web.bind.annotation.*;
 public class CustomerAdminController {
 
     private final CustomerService customerService;
+    private final AdminMarketingService adminMarketingService;
 
     @PostMapping
     public ResponseEntity<ApiResponse<CustomerResponse>> createCustomer(@Valid @RequestBody CustomerRegisterRequest request) {
@@ -35,6 +42,24 @@ public class CustomerAdminController {
             Pageable pageable) {
         PageResponse<CustomerResponse> response = PageResponse.from(customerService.searchCustomers(query, pageable));
         return ResponseEntity.ok(ApiResponse.success(response));
+    }
+
+    @GetMapping("/export")
+    public ResponseEntity<byte[]> exportCustomers() {
+        String csv = adminMarketingService.exportCustomersCsv();
+        byte[] body = csv.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"customers.csv\"")
+                .contentType(new MediaType("text", "csv", java.nio.charset.StandardCharsets.UTF_8))
+                .body(body);
+    }
+
+    @PostMapping("/marketing")
+    public ResponseEntity<ApiResponse<AdminMarketingResponse>> sendMarketing(
+            @Valid @RequestBody AdminMarketingRequest request,
+            Authentication auth) {
+        AdminMarketingResponse response = adminMarketingService.sendMarketing(request, auth.getName());
+        return ResponseEntity.ok(ApiResponse.success("Marketing campaign processed", response));
     }
 
     @GetMapping("/{id}")
