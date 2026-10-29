@@ -4,6 +4,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 import java.util.List;
+import java.util.Map;
 
 @Data
 public class HomepageConfigRequest {
@@ -22,6 +23,8 @@ public class HomepageConfigRequest {
     private List<String> featuredBusinessIds;
     private List<String> featuredVenueIds;
     private List<String> featuredSportIds;
+    /** sportId -> football|cricket|badminton|basketball|tennis|pool|swimming */
+    private Map<String, String> sportParticleShapes;
     private boolean premiumSliderEnabled;
     private boolean premiumSliderAutoplay;
     private int premiumSliderSeconds;

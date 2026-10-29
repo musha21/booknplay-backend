@@ -26,6 +26,8 @@ public class HomepageConfig {
     @Column(name = "featured_business_ids", columnDefinition = "TEXT") private String featuredBusinessIds;
     @Column(name = "featured_venue_ids", columnDefinition = "TEXT") private String featuredVenueIds;
     @Column(name = "featured_sport_ids", columnDefinition = "TEXT") private String featuredSportIds;
+    /** JSON object: sportId -> particle shape key (football|cricket|badminton|basketball|tennis|pool|swimming). */
+    @Column(name = "sport_particle_shapes", columnDefinition = "TEXT") private String sportParticleShapes;
     @Builder.Default @Column(name = "premium_slider_enabled", nullable = false) private boolean premiumSliderEnabled = true;
     @Builder.Default @Column(name = "premium_slider_autoplay", nullable = false) private boolean premiumSliderAutoplay = true;
     @Builder.Default @Column(name = "premium_slider_seconds", nullable = false) private int premiumSliderSeconds = 6;

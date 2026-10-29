@@ -21,6 +21,7 @@ import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -142,5 +143,38 @@ class HomepageConfigServiceImplTest {
 
         var saved = service.saveDraft(request, "admin@booknplay.lk");
         assertEquals("/uploads/homepage/x.jpg", saved.getPremiumSlides().get(0).getImageUrl());
+    }
+
+    @Test
+    void saveDraft_persistsSportParticleShapes() {
+        request.setSportParticleShapes(Map.of("sport-1", "cricket", "sport-2", "football"));
+        HomepageConfig draft = HomepageConfig.builder()
+                .id("draft-1")
+                .version(2)
+                .status(HomepageConfigStatus.DRAFT)
+                .heading("Find a court")
+                .premiumSliderEnabled(true)
+                .premiumSliderSeconds(6)
+                .build();
+        when(businesses.findById("biz-1")).thenReturn(Optional.of(business));
+        when(users.findById("owner-1")).thenReturn(Optional.of(owner));
+        when(venues.findByBusinessId("biz-1")).thenReturn(List.of(Venue.builder().id("v1").status(VenueStatus.ACTIVE).city("Kandy").build()));
+        when(configs.findFirstByStatusOrderByVersionDesc(HomepageConfigStatus.DRAFT)).thenReturn(Optional.of(draft));
+        when(configs.save(any(HomepageConfig.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        var saved = service.saveDraft(request, "admin@booknplay.lk");
+        assertEquals("cricket", saved.getSportParticleShapes().get("sport-1"));
+        assertEquals("football", saved.getSportParticleShapes().get("sport-2"));
+    }
+
+    @Test
+    void saveDraft_rejectsInvalidParticleShape() {
+        request.setSportParticleShapes(Map.of("sport-1", "spaceship"));
+        when(businesses.findById("biz-1")).thenReturn(Optional.of(business));
+        when(users.findById("owner-1")).thenReturn(Optional.of(owner));
+        when(venues.findByBusinessId("biz-1")).thenReturn(List.of(Venue.builder().id("v1").status(VenueStatus.ACTIVE).city("Kandy").build()));
+        when(configs.findFirstByStatusOrderByVersionDesc(HomepageConfigStatus.DRAFT)).thenReturn(Optional.of(
+                HomepageConfig.builder().id("draft-1").version(2).status(HomepageConfigStatus.DRAFT).heading("Find a court").build()));
+        assertThrows(BadRequestException.class, () -> service.saveDraft(request, "admin@booknplay.lk"));
     }
 }

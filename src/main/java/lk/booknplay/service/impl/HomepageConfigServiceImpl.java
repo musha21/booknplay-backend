@@ -30,6 +30,8 @@ public class HomepageConfigServiceImpl implements HomepageConfigService {
     private static final List<String> DEFAULT_ORDER = List.of("sports", "businesses", "venues", "cities", "howItWorks", "ownerPromotion", "trust");
     private static final Set<String> ALLOWED_SECTIONS = Set.copyOf(DEFAULT_ORDER);
     private static final Set<String> INTENSITIES = Set.of("NONE", "SUBTLE", "ENERGETIC");
+    private static final Set<String> PARTICLE_SHAPES = Set.of(
+            "football", "cricket", "badminton", "basketball", "tennis", "pool", "swimming");
     private static final List<VenueStatus> LIVE_STATUSES = List.of(VenueStatus.ACTIVE, VenueStatus.APPROVED);
     private static final String HOMEPAGE_UPLOAD_PREFIX = "/uploads/homepage/";
 
@@ -154,6 +156,7 @@ public class HomepageConfigServiceImpl implements HomepageConfigService {
         t.setFeaturedBusinessIds(s.getFeaturedBusinessIds());
         t.setFeaturedVenueIds(s.getFeaturedVenueIds());
         t.setFeaturedSportIds(s.getFeaturedSportIds());
+        t.setSportParticleShapes(s.getSportParticleShapes());
         t.setPremiumSliderEnabled(s.isPremiumSliderEnabled());
         t.setPremiumSliderAutoplay(s.isPremiumSliderAutoplay());
         t.setPremiumSliderSeconds(s.getPremiumSliderSeconds());
@@ -182,6 +185,7 @@ public class HomepageConfigServiceImpl implements HomepageConfigService {
         c.setFeaturedBusinessIds(csv(r.getFeaturedBusinessIds()));
         c.setFeaturedVenueIds(csv(r.getFeaturedVenueIds()));
         c.setFeaturedSportIds(csv(r.getFeaturedSportIds()));
+        c.setSportParticleShapes(writeShapeMap(normalizeShapeMap(r.getSportParticleShapes())));
         c.setPremiumSliderEnabled(r.isPremiumSliderEnabled());
         c.setPremiumSliderAutoplay(r.isPremiumSliderAutoplay());
         c.setPremiumSliderSeconds(r.getPremiumSliderSeconds() == 0 ? 6 : r.getPremiumSliderSeconds());
@@ -276,6 +280,7 @@ public class HomepageConfigServiceImpl implements HomepageConfigService {
                 .featuredBusinessIds(featuredBusinessIds)
                 .featuredVenueIds(featuredVenueIds)
                 .featuredSportIds(list(c.getFeaturedSportIds()))
+                .sportParticleShapes(readShapeMap(c.getSportParticleShapes()))
                 .premiumSliderEnabled(c.isPremiumSliderEnabled())
                 .premiumSliderAutoplay(c.isPremiumSliderAutoplay())
                 .premiumSliderSeconds(c.getPremiumSliderSeconds())
@@ -464,6 +469,41 @@ public class HomepageConfigServiceImpl implements HomepageConfigService {
             return objectMapper.writeValueAsString(slides);
         } catch (Exception error) {
             throw new BadRequestException("Could not save premium slides");
+        }
+    }
+
+    private Map<String, String> normalizeShapeMap(Map<String, String> raw) {
+        if (raw == null || raw.isEmpty()) return Map.of();
+        Map<String, String> normalized = new LinkedHashMap<>();
+        for (Map.Entry<String, String> entry : raw.entrySet()) {
+            if (entry.getKey() == null || entry.getKey().isBlank()) continue;
+            String shape = entry.getValue() == null ? "" : entry.getValue().trim().toLowerCase();
+            if (!PARTICLE_SHAPES.contains(shape)) {
+                throw new BadRequestException("Invalid particle shape: " + entry.getValue());
+            }
+            normalized.put(entry.getKey().trim(), shape);
+        }
+        return normalized;
+    }
+
+    private Map<String, String> readShapeMap(String json) {
+        if (json == null || json.isBlank()) return Map.of();
+        try {
+            Map<String, String> parsed = objectMapper.readValue(json, new TypeReference<>() {});
+            return normalizeShapeMap(parsed);
+        } catch (BadRequestException error) {
+            return Map.of();
+        } catch (Exception ignored) {
+            return Map.of();
+        }
+    }
+
+    private String writeShapeMap(Map<String, String> shapes) {
+        if (shapes == null || shapes.isEmpty()) return null;
+        try {
+            return objectMapper.writeValueAsString(shapes);
+        } catch (Exception error) {
+            throw new BadRequestException("Could not save sport particle shapes");
         }
     }
 
