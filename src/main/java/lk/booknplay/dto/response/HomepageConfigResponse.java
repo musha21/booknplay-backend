@@ -4,6 +4,7 @@ import lk.booknplay.enums.HomepageConfigStatus;
 import lombok.*;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 @Data @Builder @NoArgsConstructor @AllArgsConstructor
 public class HomepageConfigResponse {
@@ -25,6 +26,7 @@ public class HomepageConfigResponse {
     private List<String> featuredBusinessIds;
     private List<String> featuredVenueIds;
     private List<String> featuredSportIds;
+    private Map<String, String> sportParticleShapes;
     private boolean premiumSliderEnabled;
     private boolean premiumSliderAutoplay;
     private int premiumSliderSeconds;
